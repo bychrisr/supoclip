@@ -16,7 +16,7 @@ import { signOut, useSession } from "@/lib/auth-client";
 import { formatSupportMessage, parseApiError } from "@/lib/api-error";
 import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, Youtube, CheckCircle, AlertCircle, Loader2, Palette, Type, Paintbrush, Film, Sparkles, Upload, Monitor } from "lucide-react";
+import { ArrowRight, Youtube, CheckCircle, AlertCircle, Loader2, Palette, Type, Paintbrush, Film, Sparkles, Upload, Monitor, Gauge } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import LandingPage from "@/components/landing-page";
 import { isLandingOnlyModeEnabled } from "@/lib/app-flags";
@@ -117,6 +117,7 @@ export default function Home() {
   const [brollAvailable, setBrollAvailable] = useState(false);
   const [outputFormat, setOutputFormat] = useState<"vertical" | "original">("vertical");
   const [addSubtitles, setAddSubtitles] = useState(true);
+  const [videoQuality, setVideoQuality] = useState<"best" | "1080p" | "720p" | "480p">("best");
 
   // Latest task state
   const [latestTask, setLatestTask] = useState<LatestTask | null>(null);
@@ -176,7 +177,7 @@ export default function Home() {
   useEffect(() => {
     const loadTemplates = async () => {
       try {
-        const response = await fetch(`${apiUrl}/caption-templates`);
+        const response = await fetch('/api/caption-templates');
         if (response.ok) {
           const data = await response.json();
           setAvailableTemplates(data.templates || []);
@@ -188,7 +189,7 @@ export default function Home() {
 
     const checkBrollStatus = async () => {
       try {
-        const response = await fetch(`${apiUrl}/broll/status`);
+        const response = await fetch('/api/broll/status');
         if (response.ok) {
           const data = await response.json();
           setBrollAvailable(data.configured || false);
@@ -448,7 +449,8 @@ export default function Home() {
           include_broll: includeBroll,
           processing_mode: "fast",
           output_format: outputFormat,
-          add_subtitles: addSubtitles
+          add_subtitles: addSubtitles,
+          video_quality: videoQuality
         }),
       });
 
@@ -811,6 +813,34 @@ export default function Home() {
                       onCheckedChange={setAddSubtitles}
                       disabled={isLoading}
                     />
+                  </div>
+
+                  {/* Video Quality */}
+                  <div className="p-3 border rounded-lg bg-stone-50 space-y-2">
+                    <div className="flex items-center gap-3">
+                      <Gauge className="w-4 h-4 text-orange-500" />
+                      <div>
+                        <h3 className="text-sm font-medium text-stone-900">Video Quality</h3>
+                        <p className="text-xs text-stone-500">Download resolution for YouTube videos</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {(["best", "1080p", "720p", "480p"] as const).map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          disabled={isLoading}
+                          onClick={() => setVideoQuality(q)}
+                          className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                            videoQuality === q
+                              ? "bg-stone-900 text-white shadow-sm"
+                              : "bg-white border border-stone-200 text-stone-600 hover:bg-stone-100"
+                          }`}
+                        >
+                          {q === "best" ? "Best" : q}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </CardContent>
               </Card>

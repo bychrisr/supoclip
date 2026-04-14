@@ -235,7 +235,7 @@ export default function TaskPage() {
 
     const loadTemplates = async () => {
       try {
-        const response = await fetch(`${apiUrl}/caption-templates`);
+        const response = await fetch('/api/caption-templates');
         if (response.ok) {
           const data = await response.json();
           setAvailableTemplates(data.templates || []);

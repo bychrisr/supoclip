@@ -6,7 +6,7 @@ services:
       target: development
     container_name: supoclip-frontend
     ports:
-      - "3000:3000"
+      - "${SUPOCLIP_HOST_FRONTEND_PORT:-3001}:3000"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
@@ -17,12 +17,12 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - BACKEND_INTERNAL_URL=http://backend:8000
       - NEXT_PUBLIC_SELF_HOST=${SELF_HOST:-true}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}
       - NEXT_PUBLIC_LANDING_ONLY_MODE=${NEXT_PUBLIC_LANDING_ONLY_MODE:-false}
       - BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
       - DATABASE_URL=postgresql://supoclip:supoclip_password@postgres:5432/supoclip
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-supoclip_dev_secret_change_in_production}
-      - BETTER_AUTH_URL=http://localhost:3000
+      - BETTER_AUTH_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - STRIPE_PRICE_ID=${STRIPE_PRICE_ID}
@@ -81,7 +81,7 @@ services:
       - SELF_HOST=${SELF_HOST:-true}
       - BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
       - AUTH_SIGNATURE_TTL_SECONDS=${AUTH_SIGNATURE_TTL_SECONDS:-300}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://sp.localhost:3000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3001,http://localhost:3002,http://sp.localhost:3001}
       - FREE_PLAN_TASK_LIMIT=${FREE_PLAN_TASK_LIMIT:-10}
       - PRO_PLAN_TASK_LIMIT=${PRO_PLAN_TASK_LIMIT:-0}
     restart: unless-stopped
@@ -95,7 +95,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 60s
+      start_period: 120s
 
   # Worker process for background video processing
   worker:
@@ -135,7 +135,7 @@ services:
       - SELF_HOST=${SELF_HOST:-true}
       - BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
       - AUTH_SIGNATURE_TTL_SECONDS=${AUTH_SIGNATURE_TTL_SECONDS:-300}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://sp.localhost:3000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3001,http://localhost:3002,http://sp.localhost:3001}
       - FREE_PLAN_TASK_LIMIT=${FREE_PLAN_TASK_LIMIT:-10}
       - PRO_PLAN_TASK_LIMIT=${PRO_PLAN_TASK_LIMIT:-0}
     restart: unless-stopped
@@ -152,7 +152,7 @@ services:
     image: redis:7-alpine
     container_name: supoclip-redis
     ports:
-      - "6379:6379"
+      - "${SUPOCLIP_HOST_REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     restart: unless-stopped
@@ -171,7 +171,7 @@ services:
       POSTGRES_USER: supoclip
       POSTGRES_PASSWORD: supoclip_password
     ports:
-      - "5432:5432"
+      - "${SUPOCLIP_HOST_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql

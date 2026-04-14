@@ -363,6 +363,35 @@ class TaskRepository:
         return tasks
 
     @staticmethod
+    async def get_tasks_by_status(
+        db: AsyncSession, status: str
+    ) -> List[Dict[str, Any]]:
+        """Get all tasks with a given status."""
+        result = await db.execute(
+            text("""
+                SELECT t.id, t.user_id, t.status, t.created_at, t.updated_at
+                FROM tasks t
+                WHERE t.status = :status
+            """),
+            {"status": status},
+        )
+        tasks = []
+        for row in result.fetchall():
+            tasks.append(
+                {
+                    "id": str(row.id),
+                    "user_id": row.user_id,
+                    "status": row.status,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+            )
+        logger.debug(
+            f"[get_tasks_by_status] found {len(tasks)} task(s) with status='{status}'"
+        )
+        return tasks
+
+    @staticmethod
     async def user_exists(db: AsyncSession, user_id: str) -> bool:
         """Check if a user exists in the database."""
         result = await db.execute(

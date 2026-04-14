@@ -26,6 +26,7 @@ async def process_video_task(
     processing_mode: str = "fast",
     output_format: str = "vertical",
     add_subtitles: bool = True,
+    video_quality: str = "best",
 ) -> Dict[str, Any]:
     """
     Background worker task to process a video.
@@ -80,6 +81,7 @@ async def process_video_task(
                 processing_mode=processing_mode,
                 output_format=output_format,
                 add_subtitles=add_subtitles,
+                video_quality=video_quality,
                 progress_callback=update_progress,
                 should_cancel=should_cancel,
             )
@@ -109,6 +111,41 @@ async def process_video_task(
             raise
 
 
+async def run_startup_sweep(ctx: Dict[str, Any]) -> None:
+    """
+    Varre tasks stuck em 'queued' além do timeout e as marca como error.
+    Também inicializa o health check do provider de transcrição.
+    Executado uma vez no startup do worker — nunca em requisições HTTP.
+    """
+    from ..database import AsyncSessionLocal
+    from ..services.task_service import TaskService
+    from ..services.transcription_service import TranscriptionService
+
+    logger.info("[run_startup_sweep] start")
+
+    # Health check do provider de transcrição (Gemini → AssemblyAI fallback)
+    try:
+        gemini_ok = await TranscriptionService.run_health_check()
+        provider = "Gemini" if gemini_ok else "AssemblyAI"
+        logger.info(f"[run_startup_sweep] Transcription provider: {provider}")
+    except Exception as e:
+        logger.error(f"[run_startup_sweep] transcription health check failed: {e}", exc_info=True)
+
+    # Varre tasks stale
+    try:
+        async with AsyncSessionLocal() as db:
+            task_service = TaskService(db)
+            marked = await task_service.sweep_stale_tasks()
+            if marked:
+                logger.warning(
+                    f"[run_startup_sweep] marked {len(marked)} stale task(s) as error: {marked}"
+                )
+            else:
+                logger.info("[run_startup_sweep] no stale tasks found")
+    except Exception as e:
+        logger.error(f"[run_startup_sweep] failed: {e}", exc_info=True)
+
+
 # Worker configuration for arq
 class WorkerSettings:
     """Configuration for arq worker."""
@@ -133,3 +170,6 @@ class WorkerSettings:
 
     # Worker pool settings
     max_jobs = 4  # Process up to 4 jobs simultaneously
+
+    # Startup hook — varre tasks stale antes de aceitar jobs
+    on_startup = run_startup_sweep

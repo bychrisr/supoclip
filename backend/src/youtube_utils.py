@@ -25,30 +25,59 @@ class YouTubeDownloader:
         self.temp_dir = Path(config.temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
-    def get_optimal_download_options(self, video_id: str) -> Dict[str, Any]:
+    # Mapeamento de qualidade → (format string, format_sort)
+    _QUALITY_FORMAT_MAP: Dict[str, tuple[str, list[str]]] = {
+        "best": (
+            "bestvideo*+bestaudio/best",
+            ["res", "fps"],
+        ),
+        "1080p": (
+            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+            ["res:1080", "fps"],
+        ),
+        "720p": (
+            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+            ["res:720", "fps"],
+        ),
+        "480p": (
+            "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best",
+            ["res:480", "fps"],
+        ),
+    }
+
+    def get_optimal_download_options(
+        self,
+        video_id: str,
+        progress_hooks: Optional[list] = None,
+        video_quality: str = "best",
+    ) -> Dict[str, Any]:
         """Get optimal yt-dlp options for high-quality downloads with enhanced YouTube bypass."""
         output_path = self.temp_dir / f"{video_id}.%(ext)s"
 
+        quality = video_quality if video_quality in self._QUALITY_FORMAT_MAP else "best"
+        fmt, fmt_sort = self._QUALITY_FORMAT_MAP[quality]
+        logger.debug(f"[get_optimal_download_options] quality={quality} format={fmt!r}")
+
         return {
             "outtmpl": str(output_path),
-            # Use best available video/audio to avoid quality caps from container constraints.
-            "format": "bestvideo*+bestaudio/best",
-            "format_sort": ["res", "fps"],
+            "format": fmt,
+            "format_sort": fmt_sort,
             "merge_output_format": "mp4",
             "writesubtitles": False,
             "writeautomaticsub": False,
             "noplaylist": True,
             "overwrites": True,
-            # Optimized for speed and reliability
+            # Otimizado para velocidade e confiabilidade
             "socket_timeout": 30,
-            "retries": 5,  # Increased retries
+            "retries": 5,
             "fragment_retries": 5,
             "http_chunk_size": 10485760,  # 10MB chunks
-            # Quiet operation - only errors/warnings
+            # Progresso em tempo real via hooks
+            "progress_hooks": progress_hooks or [],
             "quiet": True,
-            "no_warnings": False,  # Show warnings but not info
+            "no_warnings": False,
             "ignoreerrors": False,
-            # Enhanced headers to avoid 403 errors
+            # Headers para evitar 403
             "http_headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -56,13 +85,19 @@ class YouTubeDownloader:
                 "Accept-Encoding": "gzip, deflate",
                 "Connection": "keep-alive",
             },
-            # Metadata extraction
             "extract_flat": False,
             "writeinfojson": False,
-            # Additional bypass options
             "nocheckcertificate": True,
             "prefer_insecure": False,
             "age_limit": None,
+            # Player clients para melhorar compatibilidade
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["web", "android"],
+                }
+            },
+            # Usar node como runtime JS para decriptar URLs de alta qualidade
+            "js_runtimes": {"node": {}},
         }
 
 
@@ -199,12 +234,20 @@ def get_youtube_video_title(url: str) -> Optional[str]:
     return video_info.get("title") if video_info else None
 
 
-def download_youtube_video(url: str, max_retries: int = 3) -> Optional[Path]:
+def download_youtube_video(
+    url: str,
+    max_retries: int = 3,
+    progress_cb: Optional[Any] = None,
+    video_quality: str = "best",
+) -> Optional[Path]:
     """
-    Download YouTube video with optimized settings and retry logic.
-    Returns the path to the downloaded file, or None if download fails.
+    Download YouTube video com retry e progresso em tempo real.
+
+    progress_cb: callable síncrono chamado com (percent: float, downloaded_bytes: int,
+                 total_bytes: int, speed: str, eta: int) durante o download.
+                 Chamado no máximo 1x por segundo para não saturar Redis.
     """
-    logger.info(f"Starting YouTube download: {url}")
+    logger.info(f"Starting YouTube download: {url} quality={video_quality!r}")
 
     video_id = get_youtube_video_id(url)
     if not video_id:
@@ -213,23 +256,32 @@ def download_youtube_video(url: str, max_retries: int = 3) -> Optional[Path]:
 
     downloader = YouTubeDownloader()
 
-    # Avoid stale low-quality cache entries by always refreshing download.
+    # Reutiliza arquivo existente se já foi baixado com qualidade suficiente (≥480p).
+    # Evita re-download em tarefas paralelas ou retry para o mesmo vídeo.
+    video_extensions = {".mp4", ".mkv", ".webm"}
     cached_files = [
-        file_path
-        for file_path in downloader.temp_dir.glob(f"{video_id}.*")
-        if file_path.is_file() and file_path.suffix.lower() in [".mp4", ".mkv", ".webm"]
+        f for f in downloader.temp_dir.glob(f"{video_id}.*")
+        if f.is_file() and f.suffix.lower() in video_extensions and not f.name.endswith(".part")
     ]
     if cached_files:
-        logger.info(
-            f"Refreshing download for {video_id} (found {len(cached_files)} cached file(s))"
-        )
-        for cached_file in cached_files:
+        best = max(cached_files, key=lambda f: f.stat().st_size)
+        width, height = _get_local_video_dimensions(best)
+        if height >= 480:
+            logger.info(
+                f"Reusing cached file: {best.name} ({best.stat().st_size // 1024 // 1024}MB, {width}x{height})"
+            )
+            if progress_cb:
+                progress_cb(100.0, best.stat().st_size, best.stat().st_size, "N/A", 0)
+            return best
+        # Baixa qualidade demais — apaga e baixa de novo
+        logger.info(f"Cached file too low quality ({height}p), re-downloading")
+        for f in cached_files:
             try:
-                cached_file.unlink()
+                f.unlink()
             except Exception as e:
-                logger.warning(f"Failed to remove stale cache file {cached_file}: {e}")
+                logger.warning(f"Failed to remove stale cache: {f}: {e}")
 
-    # Get video info first to validate and get metadata
+    # Info do vídeo para log e validação
     video_info = get_youtube_video_info(url)
     if not video_info:
         logger.error(f"Could not retrieve video information for: {url}")
@@ -237,60 +289,72 @@ def download_youtube_video(url: str, max_retries: int = 3) -> Optional[Path]:
 
     logger.info(f"Video: '{video_info.get('title')}' ({video_info.get('duration')}s)")
 
-    # Check if video is too long (optional safeguard)
     duration = video_info.get("duration", 0)
-    if duration > 3600:  # 1 hour limit
-        logger.warning(f"Video duration ({duration}s) exceeds recommended limit")
+    if duration > 3600:
+        logger.warning(f"Video duration ({duration}s) exceeds 1h — may take a while")
 
-    # Retry download with exponential backoff
+    # Hook de progresso para o yt-dlp — chamado a cada chunk baixado.
+    # _last_report[0] = último percent emitido, _last_report[1] = último timestamp
+    _last_report = [0.0, 0.0]
+
+    def _yt_dlp_progress_hook(d: dict) -> None:
+        if not progress_cb or d.get("status") != "downloading":
+            return
+        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+        downloaded = d.get("downloaded_bytes") or 0
+        percent = (downloaded / total * 100.0) if total > 0 else 0.0
+        now = time.monotonic()
+        # Emite se avançou ≥1% ou passou ≥1s desde o último report
+        if percent - _last_report[0] >= 1.0 or now - _last_report[1] >= 1.0:
+            _last_report[0] = percent
+            _last_report[1] = now
+            speed = d.get("_speed_str", "N/A")
+            eta = d.get("eta") or 0
+            try:
+                progress_cb(percent, downloaded, total, speed, eta)
+            except Exception:
+                pass
+
+    # Retry com backoff exponencial
     for attempt in range(max_retries):
         try:
             logger.info(f"Download attempt {attempt + 1}/{max_retries}")
 
-            ydl_opts = downloader.get_optimal_download_options(video_id)
+            ydl_opts = downloader.get_optimal_download_options(
+                video_id,
+                progress_hooks=[_yt_dlp_progress_hook],
+                video_quality=video_quality,
+            )
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Download the video
                 ydl.download([url])
 
-                # Find the downloaded file
                 logger.info(f"Searching for downloaded file: {video_id}.*")
                 downloaded_files = [
-                    file_path
-                    for file_path in downloader.temp_dir.glob(f"{video_id}.*")
-                    if file_path.is_file()
-                    and file_path.suffix.lower() in [".mp4", ".mkv", ".webm"]
+                    f for f in downloader.temp_dir.glob(f"{video_id}.*")
+                    if f.is_file() and f.suffix.lower() in video_extensions and not f.name.endswith(".part")
                 ]
                 if downloaded_files:
-                    ranked_files = []
+                    ranked = []
                     for candidate in downloaded_files:
                         width, height = _get_local_video_dimensions(candidate)
-                        ranked_files.append(
-                            (
-                                height,
-                                width,
-                                candidate.stat().st_size,
-                                candidate,
-                            )
-                        )
-                    ranked_files.sort(reverse=True)
-                    best_downloaded_file = ranked_files[0][3]
-                    file_size = best_downloaded_file.stat().st_size
-                    width, height = _get_local_video_dimensions(best_downloaded_file)
+                        ranked.append((height, width, candidate.stat().st_size, candidate))
+                    ranked.sort(reverse=True)
+                    best_file = ranked[0][3]
+                    file_size = best_file.stat().st_size
+                    width, height = _get_local_video_dimensions(best_file)
                     logger.info(
-                        f"Download successful: {best_downloaded_file.name} ({file_size // 1024 // 1024}MB, {width}x{height})"
+                        f"Download successful: {best_file.name} ({file_size // 1024 // 1024}MB, {width}x{height})"
                     )
-                    return best_downloaded_file
+                    return best_file
 
-                logger.warning(
-                    f"No video file found after download attempt {attempt + 1}"
-                )
+                logger.warning(f"No video file found after download attempt {attempt + 1}")
 
         except yt_dlp.utils.DownloadError as e:
             logger.warning(f"Download attempt {attempt + 1} failed: {e}")
             if attempt < max_retries - 1:
-                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
-                logger.info(f"Retrying in {wait_time} seconds...")
+                wait_time = 2 ** attempt
+                logger.info(f"Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
                 logger.error(f"All download attempts failed for: {url}")
@@ -298,8 +362,8 @@ def download_youtube_video(url: str, max_retries: int = 3) -> Optional[Path]:
         except Exception as e:
             logger.error(f"Unexpected error during download attempt {attempt + 1}: {e}")
             if attempt < max_retries - 1:
-                wait_time = 2**attempt
-                logger.info(f"Retrying in {wait_time} seconds...")
+                wait_time = 2 ** attempt
+                logger.info(f"Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
                 logger.error(f"All download attempts failed for: {url}")

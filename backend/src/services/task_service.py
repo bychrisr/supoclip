@@ -130,6 +130,7 @@ class TaskService:
         processing_mode: str = "fast",
         output_format: str = "vertical",
         add_subtitles: bool = True,
+        video_quality: str = "best",
         progress_callback: Optional[Callable] = None,
         should_cancel: Optional[Callable] = None,
     ) -> Dict[str, Any]:
@@ -194,6 +195,7 @@ class TaskService:
                 processing_mode=processing_mode,
                 output_format=output_format,
                 add_subtitles=add_subtitles,
+                video_quality=video_quality,
                 cached_transcript=cached_transcript,
                 cached_analysis_json=cached_analysis_json,
                 progress_callback=update_progress,
@@ -322,31 +324,53 @@ class TaskService:
         if not task:
             return None
 
-        if self._is_stale_queued_task(task):
-            timeout_seconds = self.config.queued_task_timeout_seconds
-            logger.warning(
-                f"Task {task_id} stuck in queued status for over {timeout_seconds}s; marking as error"
-            )
-            await self.task_repo.update_task_status(
-                self.db,
-                task_id,
-                "error",
-                progress=0,
-                progress_message=(
-                    "Task timed out while waiting in queue. "
-                    "Ensure the worker service is running and healthy (docker-compose logs -f worker)."
-                ),
-            )
-            task = await self.task_repo.get_task_by_id(self.db, task_id)
-            if not task:
-                return None
-
         # Get clips
         clips = await self.clip_repo.get_clips_by_task(self.db, task_id)
         task["clips"] = clips
         task["clips_count"] = len(clips)
 
         return task
+
+    async def sweep_stale_tasks(self) -> list[str]:
+        """
+        Marca como error todas as tasks stuck em status 'queued' além do timeout.
+        Deve ser chamado apenas no startup do worker — nunca em requisições HTTP.
+        Retorna a lista de IDs marcados como error.
+        """
+        timeout_seconds = self.config.queued_task_timeout_seconds
+        logger.info(
+            f"[sweep_stale_tasks] start — timeout threshold: {timeout_seconds}s"
+        )
+
+        queued_tasks = await self.task_repo.get_tasks_by_status(self.db, "queued")
+        marked_error: list[str] = []
+
+        for task in queued_tasks:
+            task_id = task.get("id") or task.get("task_id")
+            if not task_id:
+                continue
+
+            if self._is_stale_queued_task(task):
+                logger.warning(
+                    f"[sweep_stale_tasks] task {task_id} stuck in queued status "
+                    f"for over {timeout_seconds}s; marking as error"
+                )
+                await self.task_repo.update_task_status(
+                    self.db,
+                    task_id,
+                    "error",
+                    progress=0,
+                    progress_message=(
+                        "Task timed out while waiting in queue. "
+                        "Ensure the worker service is running and healthy (docker-compose logs -f worker)."
+                    ),
+                )
+                marked_error.append(task_id)
+
+        logger.info(
+            f"[sweep_stale_tasks] complete — {len(marked_error)} task(s) marked as error"
+        )
+        return marked_error
 
     async def get_user_tasks(
         self, user_id: str, limit: int = 50

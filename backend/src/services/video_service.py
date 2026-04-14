@@ -5,6 +5,7 @@ Video service - handles video processing business logic.
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable, Awaitable
 import logging
+import asyncio
 import json
 
 from ..utils.async_helpers import run_in_thread
@@ -34,13 +35,39 @@ class VideoService:
         return Path(url)
 
     @staticmethod
-    async def download_video(url: str) -> Optional[Path]:
+    async def download_video(
+        url: str,
+        progress_callback: Optional[Callable[[int, str, str], Awaitable[None]]] = None,
+        video_quality: str = "best",
+    ) -> Optional[Path]:
         """
-        Download a YouTube video asynchronously.
-        Runs the sync download_youtube_video in a thread pool.
+        Download a YouTube video asynchronously com progresso em tempo real.
+        Passes a thread-safe hook to yt-dlp que reporta % de download ao Redis via SSE.
         """
-        logger.info(f"Starting video download: {url}")
-        video_path = await run_in_thread(download_youtube_video, url)
+        logger.info(f"Starting video download: {url} quality={video_quality!r}")
+
+        loop = asyncio.get_event_loop()
+
+        # Hook síncrono chamado pelo yt-dlp dentro de run_in_thread.
+        # Usa run_coroutine_threadsafe para comunicar progresso ao event loop principal.
+        def _sync_progress(percent: float, downloaded: int, total: int, speed: str, eta: int) -> None:
+            if not progress_callback:
+                return
+            # Escala o % de download para a faixa 10–28% do pipeline total
+            pipeline_pct = int(10 + (percent / 100.0) * 18)
+            mb_done = downloaded // (1024 * 1024)
+            mb_total = total // (1024 * 1024)
+            msg = f"Downloading video... {percent:.0f}% ({mb_done}/{mb_total} MB)"
+            logger.debug(f"[download] {msg} @ {speed}")
+            future = asyncio.run_coroutine_threadsafe(
+                progress_callback(pipeline_pct, msg, "processing"), loop
+            )
+            try:
+                future.result(timeout=0.5)
+            except Exception:
+                pass  # Nunca bloqueia o download por falha de progresso
+
+        video_path = await run_in_thread(download_youtube_video, url, 3, _sync_progress, video_quality)
 
         if not video_path:
             logger.error(f"Failed to download video: {url}")
@@ -146,6 +173,7 @@ class VideoService:
         processing_mode: str = "fast",
         output_format: str = "vertical",
         add_subtitles: bool = True,
+        video_quality: str = "best",
         cached_transcript: Optional[str] = None,
         cached_analysis_json: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str, str], Awaitable[None]]] = None,
@@ -167,7 +195,7 @@ class VideoService:
                 await progress_callback(10, "Downloading video...", "processing")
 
             if source_type == "youtube":
-                video_path = await VideoService.download_video(url)
+                video_path = await VideoService.download_video(url, progress_callback, video_quality)
                 if not video_path:
                     raise Exception("Failed to download video")
             else:

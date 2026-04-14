@@ -129,6 +129,9 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
     add_subtitles = data.get("add_subtitles", True)
     if not isinstance(add_subtitles, bool):
         add_subtitles = True
+    video_quality = data.get("video_quality", "best")
+    if video_quality not in {"best", "1080p", "720p", "480p"}:
+        video_quality = "best"
 
     if not raw_source or not raw_source.get("url"):
         raise HTTPException(status_code=400, detail="Source URL is required")
@@ -172,6 +175,7 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
             processing_mode,
             output_format,
             add_subtitles,
+            video_quality,
         )
 
         # Save source metadata for resume/retries in environments without sources.url column
@@ -186,6 +190,7 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
                     "source_type": source_type,
                     "output_format": output_format,
                     "add_subtitles": add_subtitles,
+                    "video_quality": video_quality,
                 }),
                 ex=60 * 60 * 24 * 7,
             )
@@ -738,6 +743,7 @@ async def resume_task(
         source_type = task.get("source_type")
         output_format = "vertical"
         add_subtitles = True
+        video_quality = "best"
 
         redis_client = redis.Redis(
             host=config.redis_host, port=config.redis_port, decode_responses=True
@@ -756,6 +762,9 @@ async def resume_task(
                 asub = parsed.get("add_subtitles", add_subtitles)
                 if isinstance(asub, bool):
                     add_subtitles = asub
+                vq = parsed.get("video_quality", video_quality)
+                if vq in {"best", "1080p", "720p", "480p"}:
+                    video_quality = vq
         finally:
             await redis_client.close()
 
@@ -794,6 +803,7 @@ async def resume_task(
             processing_mode,
             output_format,
             add_subtitles,
+            video_quality,
         )
 
         return {"message": "Task resumed", "job_id": job_id}

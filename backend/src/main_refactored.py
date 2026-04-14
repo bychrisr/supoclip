@@ -52,6 +52,13 @@ async def lifespan(app: FastAPI):
         await JobQueue.get_pool()
         logger.info("✅ Job queue initialized")
 
+        # Run transcription provider health check (Gemini → AssemblyAI fallback)
+        from .services.transcription_service import TranscriptionService
+
+        gemini_ok = await TranscriptionService.run_health_check()
+        provider = "Gemini" if gemini_ok else "AssemblyAI"
+        logger.info("✅ Transcription provider: %s", provider)
+
         yield
 
     finally:

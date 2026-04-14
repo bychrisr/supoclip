@@ -14,7 +14,8 @@ import json
 import cv2
 from moviepy import VideoFileClip, CompositeVideoClip, TextClip, ColorClip
 
-import assemblyai as aai
+# DISABLED: assemblyai import moved to TranscriptionService (transcription_service.py)
+# import assemblyai as aai
 import srt
 from datetime import timedelta
 
@@ -81,87 +82,97 @@ class VideoProcessor:
 
 
 def get_video_transcript(video_path: Path, speech_model: str = "best") -> str:
-    """Get transcript using AssemblyAI with word-level timing for precise subtitles."""
-    logger.info(f"Getting transcript for: {video_path}")
+    """Get transcript using hybrid transcription (Gemini primary → AssemblyAI fallback)."""
+    from .services.transcription_service import TranscriptionService
 
-    # Configure AssemblyAI
-    aai.settings.api_key = config.assembly_ai_api_key
-    transcriber = aai.Transcriber()
+    return TranscriptionService.transcribe(video_path, speech_model)
 
-    # Request word-level timestamps for precise subtitle sync
-    speech_model_value = aai.SpeechModel.best
-    if speech_model == "nano":
-        speech_model_value = aai.SpeechModel.nano
 
-    config_obj = aai.TranscriptionConfig(
-        speaker_labels=False,
-        punctuate=True,
-        format_text=True,
-        speech_model=speech_model_value,
-    )
-
-    try:
-        logger.info("Starting AssemblyAI transcription")
-        transcript = transcriber.transcribe(str(video_path), config=config_obj)
-
-        if transcript.status == aai.TranscriptStatus.error:
-            logger.error(f"AssemblyAI transcription failed: {transcript.error}")
-            raise Exception(f"Transcription failed: {transcript.error}")
-
-        # Format transcript with timestamps for AI analysis
-        formatted_lines = []
-        if transcript.words:
-            logger.info(f"Processing {len(transcript.words)} words with precise timing")
-
-            # Group words into logical segments for readability
-            current_segment = []
-            current_start = None
-            segment_word_count = 0
-            max_words_per_segment = 8  # ~3-4 seconds of speech
-
-            for word in transcript.words:
-                if current_start is None:
-                    current_start = word.start
-
-                current_segment.append(word.text)
-                segment_word_count += 1
-
-                # End segment at natural breaks or word limit
-                if (
-                    segment_word_count >= max_words_per_segment
-                    or word.text.endswith(".")
-                    or word.text.endswith("!")
-                    or word.text.endswith("?")
-                ):
-                    if current_segment:
-                        start_time = format_ms_to_timestamp(current_start)
-                        end_time = format_ms_to_timestamp(word.end)
-                        text = " ".join(current_segment)
-                        formatted_lines.append(f"[{start_time} - {end_time}] {text}")
-
-                    current_segment = []
-                    current_start = None
-                    segment_word_count = 0
-
-            # Handle any remaining words
-            if current_segment and current_start is not None:
-                start_time = format_ms_to_timestamp(current_start)
-                end_time = format_ms_to_timestamp(transcript.words[-1].end)
-                text = " ".join(current_segment)
-                formatted_lines.append(f"[{start_time} - {end_time}] {text}")
-
-        # Cache the raw transcript for subtitle generation
-        cache_transcript_data(video_path, transcript)
-
-        result = "\n".join(formatted_lines)
-        logger.info(
-            f"Transcript formatted: {len(formatted_lines)} segments, {len(result)} chars"
-        )
-        return result
-
-    except Exception as e:
-        logger.error(f"Error in transcription: {e}")
-        raise
+# DISABLED: original AssemblyAI-only implementation replaced by TranscriptionService.
+# Kept for reference; do not remove without updating transcription_service.py.
+#
+# def get_video_transcript(video_path: Path, speech_model: str = "best") -> str:
+#     """Get transcript using AssemblyAI with word-level timing for precise subtitles."""
+#     logger.info(f"Getting transcript for: {video_path}")
+#
+#     # Configure AssemblyAI
+#     aai.settings.api_key = config.assembly_ai_api_key
+#     transcriber = aai.Transcriber()
+#
+#     # Request word-level timestamps for precise subtitle sync
+#     speech_model_value = aai.SpeechModel.best
+#     if speech_model == "nano":
+#         speech_model_value = aai.SpeechModel.nano
+#
+#     config_obj = aai.TranscriptionConfig(
+#         speaker_labels=False,
+#         punctuate=True,
+#         format_text=True,
+#         speech_model=speech_model_value,  # NOTE: use speech_models= (plural) to avoid bug #11
+#     )
+#
+#     try:
+#         logger.info("Starting AssemblyAI transcription")
+#         transcript = transcriber.transcribe(str(video_path), config=config_obj)
+#
+#         if transcript.status == aai.TranscriptStatus.error:
+#             logger.error(f"AssemblyAI transcription failed: {transcript.error}")
+#             raise Exception(f"Transcription failed: {transcript.error}")
+#
+#         # Format transcript with timestamps for AI analysis
+#         formatted_lines = []
+#         if transcript.words:
+#             logger.info(f"Processing {len(transcript.words)} words with precise timing")
+#
+#             # Group words into logical segments for readability
+#             current_segment = []
+#             current_start = None
+#             segment_word_count = 0
+#             max_words_per_segment = 8  # ~3-4 seconds of speech
+#
+#             for word in transcript.words:
+#                 if current_start is None:
+#                     current_start = word.start
+#
+#                 current_segment.append(word.text)
+#                 segment_word_count += 1
+#
+#                 # End segment at natural breaks or word limit
+#                 if (
+#                     segment_word_count >= max_words_per_segment
+#                     or word.text.endswith(".")
+#                     or word.text.endswith("!")
+#                     or word.text.endswith("?")
+#                 ):
+#                     if current_segment:
+#                         start_time = format_ms_to_timestamp(current_start)
+#                         end_time = format_ms_to_timestamp(word.end)
+#                         text = " ".join(current_segment)
+#                         formatted_lines.append(f"[{start_time} - {end_time}] {text}")
+#
+#                     current_segment = []
+#                     current_start = None
+#                     segment_word_count = 0
+#
+#             # Handle any remaining words
+#             if current_segment and current_start is not None:
+#                 start_time = format_ms_to_timestamp(current_start)
+#                 end_time = format_ms_to_timestamp(transcript.words[-1].end)
+#                 text = " ".join(current_segment)
+#                 formatted_lines.append(f"[{start_time} - {end_time}] {text}")
+#
+#         # Cache the raw transcript for subtitle generation
+#         cache_transcript_data(video_path, transcript)
+#
+#         result = "\n".join(formatted_lines)
+#         logger.info(
+#             f"Transcript formatted: {len(formatted_lines)} segments, {len(result)} chars"
+#         )
+#         return result
+#
+#     except Exception as e:
+#         logger.error(f"Error in transcription: {e}")
+#         raise
 
 
 def cache_transcript_data(video_path: Path, transcript) -> None:
@@ -1188,7 +1199,6 @@ def create_optimized_clip(
             )
             target_width, target_height = round_to_even(new_width), round_to_even(new_height)
             processed_clip = cropped_clip
->>>>>>> 70946ce (Subtitle speed up)
 
         # Add AssemblyAI subtitles with template support
         final_clips = [processed_clip]
