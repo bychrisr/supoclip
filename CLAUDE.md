@@ -112,7 +112,10 @@ utils/               → Thread pool helpers for blocking operations (async_help
 - Prisma client generated to `frontend/src/generated/prisma/` (custom output path)
 - Build: `prisma generate && next build` (Prisma generate runs on both build and postinstall)
 
-**Auth flow:** Frontend calls Better Auth → session cookie → passes `user_id` header to backend API
+**Auth flow:** Frontend calls Better Auth → session cookie → `buildBackendAuthHeaders()` (`src/lib/backend-auth.ts`) signs requests with HMAC-SHA256 → backend verifies via `src/auth_headers.py`.
+
+- Without `BACKEND_AUTH_SECRET` (default self-hosted): frontend sends plain `x-supoclip-user-id` header
+- With `BACKEND_AUTH_SECRET`: frontend sends `x-supoclip-user-id` + `x-supoclip-ts` + `x-supoclip-signature` (HMAC)
 
 ### Database
 
@@ -141,6 +144,11 @@ PostgreSQL 15. Schema in `init.sql`. Mixed naming conventions:
 | `src/broll.py` | Pexels API B-roll integration |
 | `src/caption_templates.py` | Caption template system |
 | `src/config.py` | Environment variable configuration |
+| `src/observability.py` | Structured JSON logging + trace ID middleware (`LOG_LEVEL` env var, logs to `logs/`) |
+| `src/models.py` | Pydantic request/response models |
+| `src/auth_headers.py` | Backend-side HMAC signature verification for frontend requests |
+| `src/youtube_utils.py` | YouTube URL validation and yt-dlp download helpers |
+| `src/migrations/sql/` | Raw SQL migration files |
 
 ## API Endpoints (routes in `api/routes/`)
 
@@ -165,25 +173,61 @@ PostgreSQL 15. Schema in `init.sql`. Mixed naming conventions:
 - `POST /upload` — Upload video file
 - `GET /clips/{filename}` — Serve generated clips
 
+**Other:**
+- `POST /feedback` — Submit feedback (Discord webhook via `src/api/routes/feedback.py`)
+- `GET /health`, `GET /health/db`, `GET /health/redis` — Health checks
+
 ## Environment Variables
 
 Required in `.env` (root) or `backend/.env`:
 
 ```bash
-ASSEMBLY_AI_API_KEY=...              # Required: video transcription
+# === Required ===
+ASSEMBLY_AI_API_KEY=...              # Video transcription
 LLM=google-gla:gemini-3-flash-preview # Format: provider:model-name
 GOOGLE_API_KEY=...                   # Or OPENAI_API_KEY / ANTHROPIC_API_KEY
-OLLAMA_BASE_URL=http://localhost:11434/v1  # Optional for ollama:* models
-OLLAMA_API_KEY=...                   # Optional; required for Ollama Cloud
-
-# Optional
-PEXELS_API_KEY=...                   # B-roll stock footage
-REDIS_HOST=localhost                 # Default: localhost
-REDIS_PORT=6379                      # Default: 6379
-QUEUED_TASK_TIMEOUT_SECONDS=180      # Fail-safe for stuck tasks
-TEMP_DIR=/tmp                        # Temp file storage
 DATABASE_URL=postgresql+asyncpg://...
-BETTER_AUTH_SECRET=...               # Frontend auth secret
+BETTER_AUTH_SECRET=...               # Frontend auth secret (Better Auth)
+
+# === AI Providers (at least one required) ===
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_API_KEY=...                   # Only for Ollama Cloud
+
+# === Optional: Features ===
+PEXELS_API_KEY=...                   # B-roll stock footage
+WHISPER_MODEL=base                   # tiny|base|small|medium|large (fallback transcription)
+DEFAULT_PROCESSING_MODE=fast         # fast|normal — fast uses fewer clips + lighter transcript model
+FAST_MODE_MAX_CLIPS=4
+FAST_MODE_TRANSCRIPT_MODEL=nano
+
+# === Optional: Limits ===
+MAX_CLIPS=10
+CLIP_DURATION=30                     # seconds
+MAX_VIDEO_DURATION=3600              # seconds
+FREE_PLAN_TASK_LIMIT=10              # 0 = unlimited
+PRO_PLAN_TASK_LIMIT=0                # 0 = unlimited
+
+# === Optional: Infrastructure ===
+REDIS_HOST=localhost
+REDIS_PORT=6379
+QUEUED_TASK_TIMEOUT_SECONDS=180      # Fail-safe for stuck tasks
+TEMP_DIR=/tmp
+OUTPUT_DIR=outputs
+LOG_LEVEL=INFO                       # DEBUG|INFO|WARN|ERROR — logs to backend/logs/
+
+# === Optional: Security & Auth ===
+BACKEND_AUTH_SECRET=...              # HMAC secret for frontend→backend request signing
+AUTH_SIGNATURE_TTL_SECONDS=300       # Signature expiry window
+CORS_ORIGINS=http://localhost:3000   # Comma-separated allowed origins
+
+# === Optional: Hosting Mode ===
+SELF_HOST=true                       # true = disables monetization features entirely
+
+# === Optional: Integrations ===
+DISCORD_FEEDBACK_WEBHOOK_URL=...
+DISCORD_SALES_WEBHOOK_URL=...
 ```
 
 ## Common Workflows
@@ -201,3 +245,65 @@ Edit `backend/src/ai.py`: `simplified_system_prompt` controls selection criteria
 - Output: 9:16 vertical format, H.264, even pixel dimensions (`round_to_even()`)
 - Subtitles positioned at 75% down the frame
 - Virality scoring: `hook_score`, `engagement_score`, `value_score`, `shareability_score` (0-25 each, summed to `virality_score` 0-100)
+
+---
+
+## Planning & Documentation (April 2026)
+
+### Technical Debt Assessment
+
+Conducted brownfield discovery identifying 72 technical debts (~335.5h):
+
+- `docs/prd/technical-debt-assessment.md` - Full assessment
+- Key debts: Zero tests (40h), RLS missing, rate limiting
+
+### Competitive Analysis
+
+Analyzed OpusClip, Real Oficial, VidRush + alternatives:
+
+- `docs/analysis/full-feature-audit.md` - Complete competitive audit
+- Gaps: Animated captions, PT-BR, API, scheduler, workspaces
+
+### Features Roadmap
+
+41 feature stories across 4 phases (~908h total):
+
+| Phase | Focus | Stories | Hours |
+|-------|-------|--------|-------|
+| FASE 1 | Essentials | 5 | 38h |
+| FASE 2 | Differentiation | 8 | 208h |
+| FASE 3 | Team/Agency | 9 | 208h |
+| FASE 4 | Premium | 19 | 454h |
+
+- `docs/roadmap/features-roadmap.md`
+
+### Sprint Planning
+
+15 sprints (~6 months, ~1,215h total):
+
+```
+Sprint 1-2:  Foundation + Security
+Sprint 3-6:  Differentiation BR
+Sprint 7-10: Team/Agency
+Sprint 11-15: Premium
+```
+
+- `docs/planning/sprint-planning.md`
+
+---
+
+## Documentation References
+
+| Path | Description |
+|------|------------|
+| `docs/stories/epic-features.md` | Main features epic |
+| `docs/stories/epic-technical-debt.md` | TD epic |
+| `docs/roadmap/features-roadmap.md` | Full roadmap |
+| `docs/planning/sprint-planning.md` | Sprint plan |
+| `docs/analysis/full-feature-audit.md` | Competitive audit |
+| `docs/prd/technical-debt-assessment.md` | TD assessment |
+
+```bash
+# View planning
+cat docs/planning/sprint-planning.md
+ls docs/stories/story-*.md | wc -l  # 50 stories
