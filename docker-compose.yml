@@ -20,7 +20,7 @@ services:
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}
       - NEXT_PUBLIC_LANDING_ONLY_MODE=${NEXT_PUBLIC_LANDING_ONLY_MODE:-false}
       - BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
-      - DATABASE_URL=postgresql://supoclip:supoclip_password@postgres:5432/supoclip
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-supoclip}:${POSTGRES_PASSWORD:-supoclip_password}@postgres:5432/${POSTGRES_DB:-supoclip}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-supoclip_dev_secret_change_in_production}
       - BETTER_AUTH_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3001}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
@@ -62,7 +62,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-      - DATABASE_URL=postgresql+asyncpg://supoclip:supoclip_password@postgres:5432/supoclip
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-supoclip}:${POSTGRES_PASSWORD:-supoclip_password}@postgres:5432/${POSTGRES_DB:-supoclip}
       - TEMP_DIR=/app/uploads
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -116,7 +116,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - PYTHONUNBUFFERED=1
-      - DATABASE_URL=postgresql+asyncpg://supoclip:supoclip_password@postgres:5432/supoclip
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-supoclip}:${POSTGRES_PASSWORD:-supoclip_password}@postgres:5432/${POSTGRES_DB:-supoclip}
       - TEMP_DIR=/app/uploads
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -167,9 +167,9 @@ services:
     image: postgres:15-alpine
     container_name: supoclip-postgres
     environment:
-      POSTGRES_DB: supoclip
-      POSTGRES_USER: supoclip
-      POSTGRES_PASSWORD: supoclip_password
+      POSTGRES_DB: ${POSTGRES_DB:-supoclip}
+      POSTGRES_USER: ${POSTGRES_USER:-supoclip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-supoclip_password}
     ports:
       - "${SUPOCLIP_HOST_POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -177,7 +177,7 @@ services:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U supoclip -d supoclip"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-supoclip} -d ${POSTGRES_DB:-supoclip}"]
       interval: 30s
       timeout: 10s
       retries: 3

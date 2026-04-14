@@ -23,10 +23,54 @@ from ...config import Config
 from ...font_registry import is_font_accessible
 import redis.asyncio as redis
 from ...clip_editor import export_with_preset, EXPORT_PRESETS
+from ...rate_limit import enforce_rate_limit
+from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
 config = Config()
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+async def _get_redis_client() -> Redis:
+    return redis.Redis(
+        host=config.redis_host, port=config.redis_port, decode_responses=True
+    )
+
+
+def _maybe_user_id_for_rate_limit(request: Request) -> str | None:
+    try:
+        return _get_user_id_from_headers(request)
+    except HTTPException:
+        return None
+
+
+async def _rate_limit_scope(
+    request: Request, db: AsyncSession, scope: str, limit_per_minute: int
+) -> None:
+    redis_client = await _get_redis_client()
+    try:
+        await enforce_rate_limit(
+            request=request,
+            db=db,
+            redis_client=redis_client,
+            scope=scope,
+            default_limit_per_minute=limit_per_minute,
+            user_id=_maybe_user_id_for_rate_limit(request),
+        )
+    finally:
+        await redis_client.aclose()
+
+
+async def _rate_limit_tasks(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> None:
+    await _rate_limit_scope(request, db, scope="tasks", limit_per_minute=60)
+
+
+async def _rate_limit_clips(
+    request: Request, db: AsyncSession = Depends(get_db)
+) -> None:
+    await _rate_limit_scope(request, db, scope="clips", limit_per_minute=30)
 
 
 def _normalize_font_size(value: Any, default: int = 24) -> int:
@@ -67,6 +111,20 @@ async def _require_task_owner(
 
     task = await task_service.task_repo.get_task_by_id(db, task_id)
     if not task:
+        # With RLS enabled, cross-user access can look like "not found". To preserve
+        # the API contract (403 for cross-user), do an existence check in an internal
+        # RLS context (app.internal=1) before deciding 404 vs 403.
+        from ...database import set_rls_context
+
+        async with AsyncSessionLocal() as internal_db:
+            await set_rls_context(internal_db, user_id=None, internal=True)
+            internal_task_service = TaskService(internal_db)
+            existing = await internal_task_service.task_repo.get_task_by_id(
+                internal_db, task_id
+            )
+
+        if existing is not None:
+            raise HTTPException(status_code=403, detail="Not authorized for this task")
         raise HTTPException(status_code=404, detail="Task not found")
 
     if task.get("user_id") != user_id:
@@ -77,7 +135,10 @@ async def _require_task_owner(
 
 @router.get("/")
 async def list_tasks(
-    request: Request, db: AsyncSession = Depends(get_db), limit: int = 50
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    limit: int = 50,
+    _: None = Depends(_rate_limit_tasks),
 ):
     """
     Get all tasks for the authenticated user.
@@ -96,7 +157,11 @@ async def list_tasks(
 
 
 @router.post("/")
-async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
+async def create_task(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_tasks),
+):
     """
     Create a new task and enqueue it for processing.
     Returns task_id immediately.
@@ -225,7 +290,11 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/billing/summary")
-async def get_billing_summary(request: Request, db: AsyncSession = Depends(get_db)):
+async def get_billing_summary(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_tasks),
+):
     """Get monetization status and current usage for authenticated user."""
     if config.monetization_enabled:
         user_id = get_signed_user_id(request, config)
@@ -250,7 +319,10 @@ async def get_billing_summary(request: Request, db: AsyncSession = Depends(get_d
 
 @router.get("/{task_id}")
 async def get_task(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_tasks),
 ):
     """Get task details."""
     try:
@@ -272,7 +344,10 @@ async def get_task(
 
 @router.get("/{task_id}/clips")
 async def get_task_clips(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Get all clips for a task."""
     try:
@@ -363,7 +438,10 @@ async def get_task_progress_sse(task_id: str, request: Request):
 
 @router.patch("/{task_id}")
 async def update_task(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_tasks),
 ):
     """Update task details (title)."""
     try:
@@ -391,7 +469,10 @@ async def update_task(
 
 @router.delete("/{task_id}")
 async def delete_task(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_tasks),
 ):
     """Delete a task and all its associated clips."""
     try:
@@ -422,7 +503,11 @@ async def delete_task(
 
 @router.delete("/{task_id}/clips/{clip_id}")
 async def delete_clip(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    clip_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Delete a specific clip."""
     try:
@@ -453,7 +538,11 @@ async def delete_clip(
 
 @router.patch("/{task_id}/clips/{clip_id}")
 async def trim_clip(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    clip_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Trim clip boundaries and regenerate clip file."""
     try:
@@ -481,7 +570,11 @@ async def trim_clip(
 
 @router.post("/{task_id}/clips/{clip_id}/split")
 async def split_clip(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    clip_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Split a clip into two clips."""
     try:
@@ -507,7 +600,10 @@ async def split_clip(
 
 @router.post("/{task_id}/clips/merge")
 async def merge_clips(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Merge multiple clips into one clip."""
     try:
@@ -531,7 +627,11 @@ async def merge_clips(
 
 @router.patch("/{task_id}/clips/{clip_id}/captions")
 async def update_clip_captions(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    clip_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Update clip caption text, timing style and highlighted words."""
     try:
@@ -567,7 +667,11 @@ async def update_clip_captions(
 
 @router.post("/{task_id}/clips/{clip_id}/regenerate")
 async def regenerate_clip(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    clip_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Regenerate a single clip after editing timing values."""
     try:
@@ -594,7 +698,10 @@ async def regenerate_clip(
 
 @router.post("/{task_id}/settings")
 async def apply_task_settings(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_tasks),
 ):
     """Update task-level styling settings and optionally apply to all existing clips."""
     try:
@@ -646,6 +753,7 @@ async def export_clip(
     preset: str = "tiktok",
     crop_mode: str = "face",
     db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_clips),
 ):
     """Export clip with a social platform preset."""
     try:
@@ -699,7 +807,10 @@ async def export_clip(
 
 @router.post("/{task_id}/cancel")
 async def cancel_task(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_rate_limit_tasks),
 ):
     """Cancel an active queued or processing task."""
     try:

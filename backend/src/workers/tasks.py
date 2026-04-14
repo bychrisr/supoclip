@@ -55,6 +55,10 @@ async def process_video_task(
     progress = ProgressTracker(ctx["redis"], task_id)
 
     async with AsyncSessionLocal() as db:
+        # Worker must bypass RLS for maintenance/processing operations.
+        from ..database import set_rls_context
+
+        await set_rls_context(db, user_id=user_id, internal=True)
         task_service = TaskService(db)
 
         try:

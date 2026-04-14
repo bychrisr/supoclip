@@ -111,6 +111,21 @@ async def trace_and_request_logging_middleware(request: Request, call_next):
         clear_trace_id()
         raise
 
+    # Security headers (applied broadly; safe defaults for API responses)
+    security_headers = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+        # HSTS only makes sense over HTTPS, but setting it here is fine for hosted deployments.
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+        # Minimal CSP suitable for API; prevents most injection in error pages and docs.
+        "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    }
+    for header_name, header_value in security_headers.items():
+        if header_name not in response.headers:
+            response.headers[header_name] = header_value
+
     elapsed_ms = round((time.perf_counter() - started_at) * 1000, 2)
     response.headers[TRACE_HEADER] = trace_id
     logger.info(
