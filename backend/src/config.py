@@ -42,6 +42,15 @@ class Config:
         )
         self.free_plan_task_limit = int(os.getenv("FREE_PLAN_TASK_LIMIT", "10"))
         self.pro_plan_task_limit = int(os.getenv("PRO_PLAN_TASK_LIMIT", "0"))
+        # API-first authentication (hashed API keys)
+        # REQUIRED in hosted mode; recommended always to avoid weak hashing.
+        self.api_key_pepper = self._get_optional_env("API_KEY_PEPPER")
+
+        # Billing (per-minute limits). Defaults are intentionally conservative.
+        # 0 means unlimited.
+        self.free_plan_minutes_limit = int(os.getenv("FREE_PLAN_MINUTES_LIMIT", "0"))
+        self.starter_plan_minutes_limit = int(os.getenv("STARTER_PLAN_MINUTES_LIMIT", "120"))
+        self.pro_plan_minutes_limit = int(os.getenv("PRO_PLAN_MINUTES_LIMIT", "0"))
         self.cors_origins = self._get_csv_env(
             "CORS_ORIGINS",
             [

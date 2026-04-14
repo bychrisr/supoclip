@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.docs import get_swagger_ui_html
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Config
@@ -26,6 +27,8 @@ from .database import init_db, close_db, get_db
 from .workers.job_queue import JobQueue
 from .api.routes import tasks
 from .api.routes.imports import router as imports_router
+from .api.routes.webhooks import router as webhooks_router
+from .api.v1.router import router as api_v1_router
 from .observability import (
     TRACE_HEADER,
     clear_trace_id,
@@ -89,6 +92,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.get("/docs/api", include_in_schema=False)
+async def api_first_docs():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="SupoClip API v1 Docs")
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -98,6 +106,7 @@ app.add_middleware(
     allow_headers=[
         "Content-Type",
         "Authorization",
+        "x-api-key",
         "x-supoclip-user-id",
         "x-supoclip-ts",
         "x-supoclip-signature",
@@ -194,6 +203,7 @@ app.mount("/clips", StaticFiles(directory=str(clips_dir)), name="clips")
 
 # Include routers
 app.include_router(tasks.router)
+app.include_router(api_v1_router)
 
 # Keep existing utility endpoints
 from .api.routes.media import router as media_router
@@ -206,6 +216,9 @@ app.include_router(feedback_router)
 
 # Imports (Google Drive/Vimeo/Loom/Direct URL)
 app.include_router(imports_router)
+
+# Webhooks
+app.include_router(webhooks_router)
 
 
 @app.get("/")

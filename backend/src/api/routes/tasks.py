@@ -16,6 +16,7 @@ from ...database import get_db
 from ...database import AsyncSessionLocal
 from ...services.task_service import TaskService
 from ...services.billing_service import BillingService, BillingLimitExceeded
+from ...repositories.billing_record_repository import BillingRecordRepository
 from ...auth_headers import get_signed_user_id, USER_ID_HEADER
 from ...workers.job_queue import JobQueue
 from ...workers.progress import ProgressTracker
@@ -25,6 +26,8 @@ import redis.asyncio as redis
 from ...clip_editor import export_with_preset, EXPORT_PRESETS
 from ...rate_limit import enforce_rate_limit
 from redis.asyncio import Redis
+from datetime import datetime, timezone
+import calendar
 
 logger = logging.getLogger(__name__)
 config = Config()
@@ -315,6 +318,80 @@ async def get_billing_summary(
             status_code=500,
             detail=f"Error retrieving billing summary: {str(e)}",
         )
+
+
+def _month_window(now: datetime) -> tuple[datetime, datetime]:
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    _, day_count = calendar.monthrange(start.year, start.month)
+    end = start.replace(day=day_count, hour=23, minute=59, second=59, microsecond=999999)
+    return start, end
+
+
+@router.get("/billing/history")
+async def get_billing_history(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    limit: int = 100,
+    offset: int = 0,
+    _: None = Depends(_rate_limit_tasks),
+):
+    """
+    Detailed usage history for the current billing period.
+    Returns billing_records rows (one per completed task).
+    """
+    if config.monetization_enabled:
+        user_id = get_signed_user_id(request, config)
+    else:
+        user_id = request.headers.get("user_id") or request.headers.get(USER_ID_HEADER)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="User authentication required")
+
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+
+    billing_service = BillingService(db)
+    summary = await billing_service.get_usage_summary(user_id)
+
+    period_start = summary.get("period_start")
+    period_end = summary.get("period_end")
+    if not period_start or not period_end:
+        now = datetime.now(timezone.utc)
+        period_start, period_end = _month_window(now)
+
+    try:
+        records = await BillingRecordRepository.list_billing_records(
+            db,
+            user_id=user_id,
+            period_start=period_start,
+            period_end=period_end,
+            limit=limit,
+            offset=offset,
+        )
+        total = await BillingRecordRepository.count_billing_records(
+            db,
+            user_id=user_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        minutes_total = await BillingRecordRepository.sum_minutes_processed(
+            db,
+            user_id=user_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        return {
+            "period_start": period_start,
+            "period_end": period_end,
+            "total": total,
+            "minutes_processed": minutes_total,
+            "records": records,
+            "limit": limit,
+            "offset": offset,
+        }
+    except Exception as e:
+        logger.error(f"Error retrieving billing history: {e}")
+        raise HTTPException(status_code=500, detail="Error retrieving billing history")
+
 
 
 @router.get("/{task_id}")

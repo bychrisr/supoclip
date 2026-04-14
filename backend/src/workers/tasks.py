@@ -5,6 +5,7 @@ Worker tasks - background jobs processed by arq workers.
 import logging
 from typing import Dict, Any
 import json
+import math
 
 from ..observability import configure_logging, set_trace_id
 
@@ -62,6 +63,41 @@ async def process_video_task(
         task_service = TaskService(db)
 
         try:
+            async def _emit_webhook(event: str, payload: dict[str, Any]) -> None:
+                """
+                Best-effort webhook dispatcher.
+                Never fails the main processing task.
+                """
+                try:
+                    from ..repositories.webhook_repository import WebhookRepository
+                    from ..repositories.webhook_delivery_repository import (
+                        WebhookDeliveryRepository,
+                    )
+
+                    hooks = await WebhookRepository.list_enabled_for_event(
+                        db, user_id=user_id, event=event
+                    )
+                    for hook in hooks:
+                        delivery = await WebhookDeliveryRepository.create_delivery(
+                            db,
+                            webhook_id=hook.id,
+                            user_id=user_id,
+                            event=event,
+                            payload=payload,
+                        )
+                        await ctx["redis"].enqueue_job(
+                            "deliver_webhook_event_task",
+                            hook.id,
+                            user_id,
+                            delivery.id,
+                            event,
+                            payload,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Webhook emit failed for event=%s task_id=%s", event, task_id
+                    )
+
             # Progress callback
             async def update_progress(
                 percent: int, message: str, status: str = "processing"
@@ -74,6 +110,10 @@ async def process_video_task(
                 return bool(cancelled)
 
             # Process the video
+            await _emit_webhook(
+                "task.processing_started",
+                {"task_id": task_id, "user_id": user_id, "source_url": url},
+            )
             result = await task_service.process_task(
                 task_id=task_id,
                 url=url,
@@ -90,11 +130,55 @@ async def process_video_task(
                 should_cancel=should_cancel,
             )
 
+            try:
+                from ..repositories.billing_record_repository import (
+                    BillingRecordRepository,
+                )
+
+                duration_seconds = result.get("video_duration_seconds")
+                minutes_processed = 0
+                if isinstance(duration_seconds, (int, float)) and duration_seconds > 0:
+                    minutes_processed = max(1, int(math.ceil(duration_seconds / 60.0)))
+
+                task_row = await task_service.task_repo.get_task_by_id(db, task_id)
+                source_url = None
+                source_title = None
+                if task_row:
+                    source_url = task_row.get("source_url")
+                    source_title = task_row.get("source_title")
+
+                await BillingRecordRepository.insert_billing_record(
+                    db,
+                    user_id=user_id,
+                    task_id=task_id,
+                    minutes_processed=minutes_processed,
+                    source_url=source_url,
+                    source_title=source_title,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to insert billing record for completed task %s", task_id
+                )
+
+            await _emit_webhook(
+                "task.processing_completed",
+                {
+                    "task_id": task_id,
+                    "user_id": user_id,
+                    "minutes_processed": minutes_processed,
+                    "clips_count": len(result.get("clips") or []),
+                },
+            )
+
             logger.info(f"Task {task_id} completed successfully")
             return result
 
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}", exc_info=True)
+            await _emit_webhook(
+                "task.processing_failed",
+                {"task_id": task_id, "user_id": user_id, "error": str(e)},
+            )
             try:
                 job_try = int(ctx.get("job_try", 1))
                 max_tries = int(getattr(WorkerSettings, "max_tries", 3))
@@ -113,6 +197,34 @@ async def process_video_task(
                 logger.exception("Failed to persist dead-letter payload")
             # Error will be caught by arq and task status will be updated
             raise
+
+
+async def deliver_webhook_event_task(
+    ctx: Dict[str, Any],
+    webhook_id: str,
+    user_id: str,
+    delivery_id: str,
+    event: str,
+    payload: dict[str, Any],
+) -> None:
+    """
+    Separate ARQ task so delivery retries are handled by the queue.
+    """
+    from ..database import AsyncSessionLocal, set_rls_context
+    from .webhooks import deliver_webhook_event
+
+    attempt = int(ctx.get("job_try", 1))
+    async with AsyncSessionLocal() as db:
+        await set_rls_context(db, user_id=user_id, internal=True)
+        await deliver_webhook_event(
+            db=db,
+            webhook_id=webhook_id,
+            user_id=user_id,
+            delivery_id=delivery_id,
+            event=event,
+            payload=payload,
+            attempt=attempt,
+        )
 
 
 async def run_startup_sweep(ctx: Dict[str, Any]) -> None:
@@ -160,7 +272,7 @@ class WorkerSettings:
     config = Config()
 
     # Functions to run
-    functions = [process_video_task]
+    functions = [process_video_task, deliver_webhook_event_task]
     queue_name = "supoclip_tasks"
 
     # Redis settings from environment

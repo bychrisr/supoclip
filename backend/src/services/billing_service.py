@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import Config
+from ..repositories.billing_record_repository import BillingRecordRepository
 
 
 class BillingLimitExceeded(Exception):
@@ -91,6 +92,20 @@ class BillingService:
         row = result.fetchone()
         return int(row.total) if row and row.total is not None else 0
 
+    async def _sum_minutes(
+        self, user_id: str, period_start: datetime, period_end: datetime
+    ) -> int:
+        # Best-effort for forward/backward compatibility (table may not exist yet).
+        try:
+            return await BillingRecordRepository.sum_minutes_processed(
+                self.db,
+                user_id=user_id,
+                period_start=period_start,
+                period_end=period_end,
+            )
+        except Exception:
+            return 0
+
     async def get_usage_summary(self, user_id: str) -> dict[str, Any]:
         if not self.config.monetization_enabled:
             return {
@@ -100,8 +115,11 @@ class BillingService:
                 "period_start": None,
                 "period_end": None,
                 "usage_count": 0,
+                "minutes_processed": 0,
                 "usage_limit": None,
+                "minutes_limit": None,
                 "remaining": None,
+                "minutes_remaining": None,
                 "can_create_task": True,
                 "upgrade_required": False,
                 "reason": None,
@@ -116,6 +134,7 @@ class BillingService:
             start, end = self._month_window(now)
 
         usage_count = await self._count_tasks(user_id, start, end)
+        minutes_processed = await self._sum_minutes(user_id, start, end)
 
         plan = row["plan"]
         status = row["subscription_status"]
@@ -131,18 +150,46 @@ class BillingService:
                 "period_end": end,
                 "trial_ends_at": row.get("trial_ends_at"),
                 "usage_count": usage_count,
+                "minutes_processed": minutes_processed,
                 "usage_limit": None,
+                "minutes_limit": None,
                 "remaining": None,
+                "minutes_remaining": None,
                 "can_create_task": False,
                 "upgrade_required": True,
                 "reason": "Active subscription required",
             }
 
+        minutes_limit = 0
+        if plan == "free":
+            minutes_limit = self.config.free_plan_minutes_limit
+        elif plan in {"starter", "basic"}:
+            minutes_limit = self.config.starter_plan_minutes_limit
+        else:
+            minutes_limit = self.config.pro_plan_minutes_limit
+
+        unlimited_minutes = minutes_limit <= 0
+        minutes_remaining = None if unlimited_minutes else max(
+            minutes_limit - minutes_processed, 0
+        )
+
+        # Backward-compatible fields: keep task count limits behavior as "soft" gating.
         usage_limit = self.config.pro_plan_task_limit
-        unlimited = usage_limit <= 0
-        can_create = unlimited or usage_count < usage_limit
-        remaining = None if unlimited else max(usage_limit - usage_count, 0)
-        reason = None if can_create else "Plan usage limit reached"
+        unlimited_tasks = usage_limit <= 0
+        remaining = None if unlimited_tasks else max(usage_limit - usage_count, 0)
+
+        can_create = True
+        reason = None
+        if not unlimited_minutes and minutes_processed >= minutes_limit:
+            can_create = False
+            reason = "Plan minutes limit reached"
+        elif not unlimited_tasks and usage_count >= usage_limit:
+            can_create = False
+            reason = "Plan usage limit reached"
+
+        minutes_ratio = None
+        if not unlimited_minutes and minutes_limit > 0:
+            minutes_ratio = min(1.0, max(0.0, minutes_processed / minutes_limit))
 
         return {
             "monetization_enabled": True,
@@ -152,11 +199,19 @@ class BillingService:
             "period_end": end,
             "trial_ends_at": row.get("trial_ends_at"),
             "usage_count": usage_count,
-            "usage_limit": None if unlimited else usage_limit,
+            "minutes_processed": minutes_processed,
+            "usage_limit": None if unlimited_tasks else usage_limit,
             "remaining": remaining,
+            "minutes_limit": None if unlimited_minutes else minutes_limit,
+            "minutes_remaining": minutes_remaining,
             "can_create_task": can_create,
             "upgrade_required": not can_create,
             "reason": reason,
+            "thresholds": {
+                "at_80_percent": bool(minutes_ratio is not None and minutes_ratio >= 0.8),
+                "at_100_percent": bool(minutes_ratio is not None and minutes_ratio >= 1.0),
+                "minutes_ratio": minutes_ratio,
+            },
         }
 
     async def assert_can_create_task(self, user_id: str) -> None:

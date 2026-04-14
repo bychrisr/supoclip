@@ -343,6 +343,15 @@ export default function SettingsPage() {
             </p>
           </div>
 
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button asChild variant="secondary" className="justify-start">
+              <Link href="/settings/billing">Billing →</Link>
+            </Button>
+            <Button asChild variant="secondary" className="justify-start">
+              <Link href="/settings/developer">Developer (API keys, webhooks) →</Link>
+            </Button>
+          </div>
+
           <Separator className="my-8" />
 
           <div className="space-y-8">

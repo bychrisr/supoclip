@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Callable, Awaitable
 import logging
 import asyncio
 import json
+import subprocess
 
 from ..utils.async_helpers import run_in_thread
 from ..youtube_utils import (
@@ -33,6 +34,41 @@ class VideoService:
             filename = Path(url.removeprefix(UPLOAD_URL_PREFIX)).name
             return Path(config.temp_dir) / "uploads" / filename
         return Path(url)
+
+    @staticmethod
+    async def get_video_duration_seconds(video_path: Path) -> Optional[float]:
+        """
+        Best-effort duration using ffprobe. Returns seconds (float) or None.
+        """
+
+        def _probe() -> Optional[float]:
+            try:
+                result = subprocess.run(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "format=duration",
+                        "-of",
+                        "default=noprint_wrappers=1:nokey=1",
+                        str(video_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    return None
+                raw = (result.stdout or "").strip()
+                if not raw:
+                    return None
+                value = float(raw)
+                return value if value > 0 else None
+            except Exception:
+                return None
+
+        return await run_in_thread(_probe)
 
     @staticmethod
     async def download_video(
@@ -203,6 +239,8 @@ class VideoService:
                 if not video_path.exists():
                     raise Exception("Video file not found")
 
+            duration_seconds = await VideoService.get_video_duration_seconds(video_path)
+
             # Step 2: Generate transcript
             if should_cancel and await should_cancel():
                 raise Exception("Task cancelled")
@@ -306,6 +344,7 @@ class VideoService:
                 "summary": relevant_parts.summary if relevant_parts else None,
                 "key_topics": relevant_parts.key_topics if relevant_parts else None,
                 "transcript": transcript,
+                "video_duration_seconds": duration_seconds,
                 "analysis_json": json.dumps(
                     {
                         "summary": relevant_parts.summary if relevant_parts else None,

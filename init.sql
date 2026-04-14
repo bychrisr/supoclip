@@ -111,6 +111,79 @@ CREATE TABLE processing_cache (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Billing records (per-task usage tracking)
+CREATE TABLE IF NOT EXISTS billing_records (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    task_id VARCHAR(36) NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    minutes_processed INTEGER NOT NULL DEFAULT 0 CHECK (minutes_processed >= 0),
+    source_url VARCHAR(1000),
+    source_title VARCHAR(500),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Idempotency: one billing record per task.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_billing_records_task_id ON billing_records(task_id);
+
+-- API keys (API-first programmatic access)
+CREATE TABLE IF NOT EXISTS api_keys (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key_hash VARCHAR(64) NOT NULL,
+    prefix VARCHAR(16) NOT NULL,
+    name VARCHAR(120) NOT NULL,
+    scopes TEXT[] NOT NULL DEFAULT '{}'::text[],
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    revoked_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_user_prefix_unique
+ON api_keys(user_id, prefix);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix
+ON api_keys(prefix);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_user_created
+ON api_keys(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_active_prefix
+ON api_keys(prefix)
+WHERE revoked_at IS NULL;
+
+-- Webhooks + delivery logs
+CREATE TABLE IF NOT EXISTS webhooks (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    events TEXT[] NOT NULL DEFAULT '{}',
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    secret TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhooks_user_id ON webhooks(user_id);
+CREATE INDEX IF NOT EXISTS idx_webhooks_user_enabled ON webhooks(user_id, enabled);
+CREATE INDEX IF NOT EXISTS idx_webhooks_events_gin ON webhooks USING GIN (events);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    webhook_id VARCHAR(36) NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    attempt INTEGER NOT NULL DEFAULT 1,
+    response_status INTEGER,
+    response_body TEXT,
+    last_error TEXT,
+    delivered_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_user_created ON webhook_deliveries(user_id, created_at DESC);
+
 -- Per-user rate/usage limits (used by backend)
 CREATE TABLE IF NOT EXISTS user_limits (
     user_id VARCHAR(36) NOT NULL,
@@ -175,6 +248,9 @@ CREATE INDEX idx_tasks_processing_mode ON tasks(processing_mode);
 CREATE INDEX idx_tasks_completed_at ON tasks(completed_at);
 CREATE INDEX idx_sources_created_at ON sources(created_at);
 CREATE INDEX idx_processing_cache_source_url ON processing_cache(source_url);
+CREATE INDEX IF NOT EXISTS idx_billing_records_user_id ON billing_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_billing_records_created_at ON billing_records(created_at);
+CREATE INDEX IF NOT EXISTS idx_billing_records_user_created_at ON billing_records(user_id, created_at DESC);
 CREATE INDEX idx_generated_clips_task_id ON generated_clips(task_id);
 CREATE INDEX idx_generated_clips_clip_order ON generated_clips(clip_order);
 CREATE INDEX idx_generated_clips_created_at ON generated_clips(created_at);
@@ -255,6 +331,170 @@ WITH CHECK (
 
 CREATE POLICY tasks_owner_delete
 ON tasks
+FOR DELETE
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+ALTER TABLE billing_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE billing_records FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS billing_records_owner_select ON billing_records;
+DROP POLICY IF EXISTS billing_records_owner_insert ON billing_records;
+DROP POLICY IF EXISTS billing_records_owner_delete ON billing_records;
+
+CREATE POLICY billing_records_owner_select
+ON billing_records
+FOR SELECT
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY billing_records_owner_insert
+ON billing_records
+FOR INSERT
+WITH CHECK (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY billing_records_owner_delete
+ON billing_records
+FOR DELETE
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+-- === API keys RLS ===
+ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_keys FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS api_keys_owner_select ON api_keys;
+DROP POLICY IF EXISTS api_keys_owner_insert ON api_keys;
+DROP POLICY IF EXISTS api_keys_owner_update ON api_keys;
+DROP POLICY IF EXISTS api_keys_owner_delete ON api_keys;
+
+CREATE POLICY api_keys_owner_select
+ON api_keys
+FOR SELECT
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY api_keys_owner_insert
+ON api_keys
+FOR INSERT
+WITH CHECK (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY api_keys_owner_update
+ON api_keys
+FOR UPDATE
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+)
+WITH CHECK (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY api_keys_owner_delete
+ON api_keys
+FOR DELETE
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+-- === Webhooks RLS ===
+ALTER TABLE webhooks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhooks FORCE ROW LEVEL SECURITY;
+ALTER TABLE webhook_deliveries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_deliveries FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS webhooks_owner_select ON webhooks;
+DROP POLICY IF EXISTS webhooks_owner_insert ON webhooks;
+DROP POLICY IF EXISTS webhooks_owner_update ON webhooks;
+DROP POLICY IF EXISTS webhooks_owner_delete ON webhooks;
+
+CREATE POLICY webhooks_owner_select
+ON webhooks
+FOR SELECT
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY webhooks_owner_insert
+ON webhooks
+FOR INSERT
+WITH CHECK (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY webhooks_owner_update
+ON webhooks
+FOR UPDATE
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+)
+WITH CHECK (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY webhooks_owner_delete
+ON webhooks
+FOR DELETE
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+DROP POLICY IF EXISTS webhook_deliveries_owner_select ON webhook_deliveries;
+DROP POLICY IF EXISTS webhook_deliveries_owner_insert ON webhook_deliveries;
+DROP POLICY IF EXISTS webhook_deliveries_owner_update ON webhook_deliveries;
+DROP POLICY IF EXISTS webhook_deliveries_owner_delete ON webhook_deliveries;
+
+CREATE POLICY webhook_deliveries_owner_select
+ON webhook_deliveries
+FOR SELECT
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY webhook_deliveries_owner_insert
+ON webhook_deliveries
+FOR INSERT
+WITH CHECK (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY webhook_deliveries_owner_update
+ON webhook_deliveries
+FOR UPDATE
+USING (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+)
+WITH CHECK (
+  current_setting('app.internal', true) = '1'
+  OR user_id = NULLIF(current_setting('app.user_id', true), '')
+);
+
+CREATE POLICY webhook_deliveries_owner_delete
+ON webhook_deliveries
 FOR DELETE
 USING (
   current_setting('app.internal', true) = '1'
