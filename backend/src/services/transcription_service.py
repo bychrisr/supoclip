@@ -222,9 +222,18 @@ class TranscriptionService:
             mime_type="audio/ogg",
         )
 
+        language_hint = (config.transcription_language_hint or "").strip().lower()
+        prompt = TRANSCRIPTION_PROMPT
+        if language_hint and language_hint not in {"auto", "none"}:
+            prompt = (
+                "The audio language is Brazilian Portuguese (pt-BR). "
+                "Preserve Portuguese spelling and punctuation.\n\n"
+                + TRANSCRIPTION_PROMPT
+            )
+
         response = client.models.generate_content(
             model=cls._resolve_gemini_model(config.llm),
-            contents=[audio_part, TRANSCRIPTION_PROMPT],
+            contents=[audio_part, prompt],
         )
 
         raw = response.text.strip()
@@ -401,11 +410,17 @@ class TranscriptionService:
         if speech_model == "nano":
             speech_model_value = aai.SpeechModel.nano
 
+        language_hint = (config.transcription_language_hint or "").strip().lower()
+        language_code = (
+            language_hint if (language_hint and language_hint not in {"auto", "none"}) else None
+        )
+
         config_obj = aai.TranscriptionConfig(
             speaker_labels=False,
             punctuate=True,
             format_text=True,
             speech_model=speech_model_value,
+            language_code=language_code,
         )
 
         logger.info("[TranscriptionService] Starting AssemblyAI transcription")

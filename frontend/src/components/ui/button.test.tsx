@@ -2,6 +2,7 @@ import * as React from "react"
 import { describe, expect, it } from "vitest"
 
 import { render, screen } from "@testing-library/react"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 
@@ -14,7 +15,7 @@ describe("<Button />", () => {
   it("supports asChild rendering", () => {
     render(
       <Button asChild>
-        <a href="/x">Go</a>
+        <Link href="/x">Go</Link>
       </Button>
     )
 

@@ -20,6 +20,10 @@ import { ArrowRight, Youtube, CheckCircle, AlertCircle, Loader2, Palette, Type, 
 import { Switch } from "@/components/ui/switch";
 import LandingPage from "@/components/landing-page";
 import { isLandingOnlyModeEnabled } from "@/lib/app-flags";
+import { useTranslations } from "next-intl";
+import { intlLocaleByAppLocale } from "@/i18n/config";
+import { useAppLocale } from "@/i18n/use-app-locale";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 interface LatestTask {
   id: string;
@@ -86,6 +90,8 @@ const getYouTubeThumbnailUrl = (value: string): string | null => {
 };
 
 export default function Home() {
+  const t = useTranslations();
+  const appLocale = useAppLocale();
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -407,7 +413,7 @@ export default function Home() {
 
       // If uploading file, upload it first
       if (sourceType === "upload" && fileRef.current) {
-        setStatusMessage("Uploading video file...");
+        setStatusMessage(t("home.uploadingVideo"));
         setProgress(5);
 
         const formData = new FormData();
@@ -518,6 +524,7 @@ export default function Home() {
             </div>
 
             <div className="flex items-center gap-2">
+              <LanguageSwitcher className="mr-1" />
               {billingSummary?.monetization_enabled && (
                 <div className="flex items-center gap-2 mr-1">
                   <Badge
@@ -555,18 +562,18 @@ export default function Home() {
               )}
               <Link href="/list">
                 <Button variant="outline" size="sm">
-                  All Generations
+                  {t("nav.allGenerations")}
                 </Button>
               </Link>
               {isAdmin && (
                 <Link href="/admin">
                   <Button variant="outline" size="sm">
-                    Admin
+                    {t("nav.admin")}
                   </Button>
                 </Link>
               )}
               <Button variant="outline" size="sm" onClick={handleSignOut}>
-                Sign Out
+                {t("nav.signOut")}
               </Button>
               <Link href="/settings" className="flex items-center gap-3 hover:bg-gray-50 rounded-lg px-3 py-2 transition-colors cursor-pointer">
                 <Avatar className="w-8 h-8">
@@ -602,7 +609,13 @@ export default function Home() {
                   <div className="flex items-center gap-2 text-xs text-stone-500 mt-0.5">
                     <span className="capitalize">{latestTask.source_type}</span>
                     <span>&middot;</span>
-                    <span>{new Date(latestTask.created_at).toLocaleDateString()}</span>
+                    <span>
+                      {new Intl.DateTimeFormat(intlLocaleByAppLocale[appLocale], {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      }).format(new Date(latestTask.created_at))}
+                    </span>
                     <span>&middot;</span>
                     <span>{latestTask.clips_count} {latestTask.clips_count === 1 ? "clip" : "clips"}</span>
                   </div>
@@ -646,10 +659,10 @@ export default function Home() {
           <div className="lg:col-span-3">
             <div className="mb-8">
               <h2 className="text-2xl font-bold text-stone-900 mb-2">
-                Create New Clip
+                {t("home.createNewClip")}
               </h2>
               <p className="text-stone-500">
-                Paste a YouTube link or upload a video — AI handles the rest.
+                {t("home.subtitle")}
               </p>
             </div>
 
@@ -673,7 +686,7 @@ export default function Home() {
                     }`}
                   >
                     <Youtube className="w-4 h-4" />
-                    YouTube URL
+                    {t("home.youtubeUrl")}
                   </button>
                   <button
                     type="button"
@@ -686,7 +699,7 @@ export default function Home() {
                     }`}
                   >
                     <Upload className="w-4 h-4" />
-                    Upload Video
+                    {t("home.uploadVideo")}
                   </button>
                 </div>
 
@@ -697,7 +710,7 @@ export default function Home() {
                     <Input
                       id="youtube-url"
                       type="url"
-                      placeholder="https://www.youtube.com/watch?v=..."
+                      placeholder={t("home.youtubePlaceholder")}
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
                       disabled={isLoading}
@@ -723,8 +736,8 @@ export default function Home() {
                       <p className="text-sm font-medium text-stone-900">{fileName}</p>
                     ) : (
                       <>
-                        <p className="text-sm font-medium text-stone-700">Drop a video file here or click to browse</p>
-                        <p className="text-xs text-stone-400 mt-1">MP4, MOV, AVI up to 500MB</p>
+                        <p className="text-sm font-medium text-stone-700">{t("home.dropzoneTitle")}</p>
+                        <p className="text-xs text-stone-400 mt-1">{t("home.dropzoneHint")}</p>
                       </>
                     )}
                   </div>
@@ -1065,7 +1078,7 @@ export default function Home() {
                   isLoading
                 }
               >
-                {isLoading ? "Processing..." : "Process Video"}
+                {isLoading ? t("home.processingEllipsis") : t("home.processVideo")}
               </Button>
             </form>
           </div>

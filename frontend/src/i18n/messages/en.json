@@ -1,0 +1,71 @@
+{
+  "app": {
+    "name": "SupoClip",
+    "description": "Turn long videos into viral-ready shorts."
+  },
+  "nav": {
+    "allGenerations": "All Generations",
+    "admin": "Admin",
+    "signOut": "Sign Out",
+    "settings": "Settings",
+    "back": "Back"
+  },
+  "home": {
+    "createNewClip": "Create New Clip",
+    "subtitle": "Paste a YouTube link or upload a video — AI handles the rest.",
+    "youtubeUrl": "YouTube URL",
+    "uploadVideo": "Upload Video",
+    "youtubePlaceholder": "https://www.youtube.com/watch?v=...",
+    "dropzoneTitle": "Drop a video file here or click to browse",
+    "dropzoneHint": "MP4, MOV, AVI up to 500MB",
+    "processing": "Processing",
+    "processVideo": "Process Video",
+    "processingEllipsis": "Processing...",
+    "uploadingVideo": "Uploading video file..."
+  },
+  "tasks": {
+    "status": {
+      "completed": "Completed",
+      "processing": "Processing",
+      "queued": "Queued",
+      "error": "Error"
+    }
+  },
+  "list": {
+    "title": "All Generations",
+    "subtitle": "View and manage all your video clip generations",
+    "signInRequiredTitle": "Sign In Required",
+    "signInRequiredSubtitle": "You need to be signed in to view your generations.",
+    "noGenerationsTitle": "No generations yet",
+    "noGenerationsSubtitle": "Start by processing your first video to create clips.",
+    "createFirst": "Create New Generation"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Configure your default preferences for video clip generation",
+    "signInRequiredTitle": "Sign In Required",
+    "signInRequiredSubtitle": "You need to sign in to access your settings",
+    "defaultFontTitle": "Default Font Settings",
+    "defaultFontSubtitle": "These settings will be applied to all new video processing tasks",
+    "fontFamily": "Font Family",
+    "uploadCustomFont": "Upload Custom Font (.ttf/.otf)",
+    "onlyTtfOtf": "Only .ttf and .otf files are supported for custom fonts.",
+    "previewSubtitle": "Your subtitle will look like this",
+    "manageBilling": "Manage Billing",
+    "upgradeToPro": "Upgrade to Pro",
+    "savePreferences": "Save Preferences",
+    "savingEllipsis": "Saving...",
+    "savedSuccess": "Preferences saved successfully!",
+    "loadingEllipsis": "Loading..."
+  },
+  "auth": {
+    "noAccount": "Don't have an account?",
+    "haveAccount": "Already have an account?",
+    "signUp": "Sign up",
+    "signIn": "Sign In"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again."
+  }
+}
+

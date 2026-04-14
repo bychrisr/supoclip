@@ -9,6 +9,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useSession } from "@/lib/auth-client";
 import { ArrowLeft, Clock, PlayCircle, AlertCircle, CheckCircle, Loader2 } from "lucide-react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { intlLocaleByAppLocale } from "@/i18n/config";
+import { useAppLocale } from "@/i18n/use-app-locale";
 
 interface Task {
   id: string;
@@ -23,6 +26,8 @@ interface Task {
 }
 
 export default function ListPage() {
+  const t = useTranslations();
+  const appLocale = useAppLocale();
   const { data: session, isPending } = useSession();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -61,28 +66,28 @@ export default function ListPage() {
         return (
           <Badge className="bg-green-100 text-green-800">
             <CheckCircle className="w-3 h-3 mr-1" />
-            Completed
+            {t("tasks.status.completed")}
           </Badge>
         );
       case "processing":
         return (
           <Badge className="bg-blue-100 text-blue-800">
             <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-            Processing
+            {t("tasks.status.processing")}
           </Badge>
         );
       case "queued":
         return (
           <Badge className="bg-yellow-100 text-yellow-800">
             <Clock className="w-3 h-3 mr-1" />
-            Queued
+            {t("tasks.status.queued")}
           </Badge>
         );
       case "error":
         return (
           <Badge className="bg-red-100 text-red-800">
             <AlertCircle className="w-3 h-3 mr-1" />
-            Error
+            {t("tasks.status.error")}
           </Badge>
         );
       default:
@@ -92,9 +97,10 @@ export default function ListPage() {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
+    const isPt = appLocale === "pt";
+    return new Intl.DateTimeFormat(intlLocaleByAppLocale[appLocale], {
+      day: "2-digit",
+      month: isPt ? "2-digit" : "short",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
@@ -117,12 +123,12 @@ export default function ListPage() {
     return (
       <div className="min-h-screen bg-white">
         <div className="max-w-4xl mx-auto px-4 py-24 text-center">
-          <h1 className="text-3xl font-bold text-black mb-4">Sign In Required</h1>
+          <h1 className="text-3xl font-bold text-black mb-4">{t("list.signInRequiredTitle")}</h1>
           <p className="text-gray-600 mb-8">
-            You need to be signed in to view your generations.
+            {t("list.signInRequiredSubtitle")}
           </p>
           <Link href="/sign-in">
-            <Button size="lg">Sign In</Button>
+            <Button size="lg">{t("auth.signIn")}</Button>
           </Link>
         </div>
       </div>
@@ -138,15 +144,15 @@ export default function ListPage() {
             <Link href="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="w-4 h-4" />
-                Back
+                {t("nav.back")}
               </Button>
             </Link>
           </div>
 
           <div>
-            <h1 className="text-2xl font-bold text-black mb-2">All Generations</h1>
+            <h1 className="text-2xl font-bold text-black mb-2">{t("list.title")}</h1>
             <p className="text-gray-600">
-              View and manage all your video clip generations
+              {t("list.subtitle")}
             </p>
           </div>
         </div>
@@ -181,13 +187,13 @@ export default function ListPage() {
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                 <PlayCircle className="w-8 h-8 text-gray-400" />
               </div>
-              <h2 className="text-xl font-semibold text-black mb-2">No generations yet</h2>
+              <h2 className="text-xl font-semibold text-black mb-2">{t("list.noGenerationsTitle")}</h2>
               <p className="text-gray-600 mb-6">
-                Start by processing your first video to create clips.
+                {t("list.noGenerationsSubtitle")}
               </p>
               <Link href="/">
                 <Button>
-                  Create New Generation
+                  {t("list.createFirst")}
                 </Button>
               </Link>
             </CardContent>

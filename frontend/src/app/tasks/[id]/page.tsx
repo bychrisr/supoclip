@@ -1201,7 +1201,7 @@ export default function TaskPage() {
                           <Download className="w-4 h-4" />
                           {exportingClipId === clip.id ? "Exporting..." : "Export"}
                         </Button>
-                        <Select value={exportPreset} onValueChange={setExportPreset}>
+                        <Select value={exportPreset} onValueChange={(value) => setExportPreset(value as ExportPreset)}>
                           <SelectTrigger className="h-8 w-28">
                             <SelectValue placeholder="Preset" />
                           </SelectTrigger>
@@ -1214,7 +1214,7 @@ export default function TaskPage() {
                             <SelectItem value="portrait">Portrait</SelectItem>
                           </SelectContent>
                         </Select>
-                        <Select value={exportCropMode} onValueChange={setExportCropMode}>
+                        <Select value={exportCropMode} onValueChange={(value) => setExportCropMode(value as CropMode)}>
                           <SelectTrigger className="h-8 w-28">
                             <SelectValue placeholder="Crop" />
                           </SelectTrigger>

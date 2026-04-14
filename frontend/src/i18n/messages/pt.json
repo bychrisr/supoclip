@@ -1,0 +1,69 @@
+{
+  "app": {
+    "description": "Transforme vídeos longos em cortes prontos para viralizar."
+  },
+  "nav": {
+    "allGenerations": "Todas as gerações",
+    "admin": "Admin",
+    "signOut": "Sair",
+    "settings": "Configurações",
+    "back": "Voltar"
+  },
+  "home": {
+    "createNewClip": "Criar novo clip",
+    "subtitle": "Cole um link do YouTube ou envie um vídeo — a IA faz o resto.",
+    "youtubeUrl": "URL do YouTube",
+    "uploadVideo": "Enviar vídeo",
+    "dropzoneTitle": "Solte um arquivo de vídeo aqui ou clique para buscar",
+    "dropzoneHint": "MP4, MOV, AVI até 500MB",
+    "processing": "Processando",
+    "processVideo": "Processar vídeo",
+    "processingEllipsis": "Processando...",
+    "uploadingVideo": "Enviando arquivo de vídeo..."
+  },
+  "tasks": {
+    "status": {
+      "completed": "Concluído",
+      "processing": "Processando",
+      "queued": "Na fila",
+      "error": "Erro"
+    }
+  },
+  "list": {
+    "title": "Todas as gerações",
+    "subtitle": "Veja e gerencie todas as suas gerações de clips",
+    "signInRequiredTitle": "Login necessário",
+    "signInRequiredSubtitle": "Você precisa estar logado para ver suas gerações.",
+    "noGenerationsTitle": "Nenhuma geração ainda",
+    "noGenerationsSubtitle": "Comece processando seu primeiro vídeo para criar clips.",
+    "createFirst": "Criar nova geração"
+  },
+  "settings": {
+    "title": "Configurações",
+    "subtitle": "Configure suas preferências padrão para geração de clips",
+    "signInRequiredTitle": "Login necessário",
+    "signInRequiredSubtitle": "Você precisa fazer login para acessar suas configurações",
+    "defaultFontTitle": "Configurações padrão de fonte",
+    "defaultFontSubtitle": "Essas configurações serão aplicadas a todas as novas tarefas",
+    "fontFamily": "Família de fonte",
+    "uploadCustomFont": "Enviar fonte personalizada (.ttf/.otf)",
+    "onlyTtfOtf": "Apenas arquivos .ttf e .otf são suportados para fontes personalizadas.",
+    "previewSubtitle": "Sua legenda ficará assim",
+    "manageBilling": "Gerenciar cobrança",
+    "upgradeToPro": "Assinar Pro",
+    "savePreferences": "Salvar preferências",
+    "savingEllipsis": "Salvando...",
+    "savedSuccess": "Preferências salvas com sucesso!",
+    "loadingEllipsis": "Carregando..."
+  },
+  "auth": {
+    "noAccount": "Não tem uma conta?",
+    "haveAccount": "Já tem uma conta?",
+    "signUp": "Criar conta",
+    "signIn": "Entrar"
+  },
+  "errors": {
+    "generic": "Algo deu errado. Tente novamente."
+  }
+}
+

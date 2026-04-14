@@ -13,6 +13,7 @@ import { Slider } from "@/components/ui/slider";
 import { signOut, useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { Type, Palette, CheckCircle, AlertCircle, Settings, ArrowLeft } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 interface UserPreferences {
   fontFamily: string;
@@ -30,6 +31,7 @@ interface BillingSummary {
 }
 
 export default function SettingsPage() {
+  const t = useTranslations();
   const [fontFamily, setFontFamily] = useState("TikTokSans-Regular");
   const [fontSize, setFontSize] = useState(24);
   const [fontColor, setFontColor] = useState("#FFFFFF");
@@ -102,7 +104,7 @@ export default function SettingsPage() {
 
     const isSupported = file.name.toLowerCase().endsWith(".ttf") || file.name.toLowerCase().endsWith(".otf");
     if (!isSupported) {
-      setError("Only .ttf and .otf files are supported for custom fonts.");
+      setError(t("settings.onlyTtfOtf"));
       return;
     }
 
@@ -273,13 +275,13 @@ export default function SettingsPage() {
         <div className="max-w-4xl mx-auto px-4 py-24">
           <div className="text-center">
             <h1 className="text-3xl font-bold text-black mb-4">
-              Sign In Required
+              {t("settings.signInRequiredTitle")}
             </h1>
             <p className="text-gray-600 mb-8">
-              You need to sign in to access your settings
+              {t("settings.signInRequiredSubtitle")}
             </p>
             <Link href="/sign-in">
-              <Button size="lg">Sign In</Button>
+              <Button size="lg">{t("auth.signIn")}</Button>
             </Link>
           </div>
         </div>
@@ -296,7 +298,7 @@ export default function SettingsPage() {
             <Link href="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="w-4 h-4" />
-                Back
+                {t("nav.back")}
               </Button>
             </Link>
 
@@ -333,11 +335,11 @@ export default function SettingsPage() {
             <div className="flex items-center gap-2 mb-2">
               <Settings className="w-6 h-6 text-black" />
               <h2 className="text-2xl font-bold text-black">
-                Settings
+                {t("settings.title")}
               </h2>
             </div>
             <p className="text-gray-600">
-              Configure your default preferences for video clip generation
+              {t("settings.subtitle")}
             </p>
           </div>
 
@@ -348,10 +350,10 @@ export default function SettingsPage() {
             <div className="space-y-6">
               <div>
                 <h3 className="text-lg font-semibold text-black mb-1">
-                  Default Font Settings
+                  {t("settings.defaultFontTitle")}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  These settings will be applied to all new video processing tasks
+                  {t("settings.defaultFontSubtitle")}
                 </p>
               </div>
 
@@ -359,7 +361,7 @@ export default function SettingsPage() {
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-black flex items-center gap-2">
                   <Type className="w-4 h-4" />
-                  Font Family
+                  {t("settings.fontFamily")}
                 </Label>
                 <Select value={fontFamily} onValueChange={setFontFamily} disabled={isLoading}>
                   <SelectTrigger className="w-full">
@@ -381,7 +383,7 @@ export default function SettingsPage() {
               {/* Custom Font Upload */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium text-black">
-                  Upload Custom Font (.ttf/.otf)
+                  {t("settings.uploadCustomFont")}
                 </Label>
                 <div className="flex items-center gap-3">
                   <Input
@@ -474,7 +476,7 @@ export default function SettingsPage() {
                     }}
                     className="font-medium"
                   >
-                    Your subtitle will look like this
+                    {t("settings.previewSubtitle")}
                   </p>
                 </div>
               </div>
@@ -485,7 +487,7 @@ export default function SettingsPage() {
               <Alert className="border-green-200 bg-green-50">
                 <CheckCircle className="h-4 w-4 text-green-500" />
                 <AlertDescription className="text-sm text-green-700">
-                  Preferences saved successfully!
+                    {t("settings.savedSuccess")}
                 </AlertDescription>
               </Alert>
             )}
@@ -525,10 +527,10 @@ export default function SettingsPage() {
                   className="w-full"
                 >
                   {isBillingActionLoading
-                    ? "Loading..."
+                    ? t("settings.loadingEllipsis")
                     : billingSummary.plan === "pro"
-                      ? "Manage Billing"
-                      : `Upgrade to Pro ($${proPriceMonthly}/mo)`}
+                      ? t("settings.manageBilling")
+                      : `${t("settings.upgradeToPro")} ($${proPriceMonthly}/mo)`}
                 </Button>
               </div>
             )}
@@ -538,7 +540,7 @@ export default function SettingsPage() {
               disabled={isLoading}
               className="w-full h-11"
             >
-              {isLoading ? "Saving..." : "Save Preferences"}
+              {isLoading ? t("settings.savingEllipsis") : t("settings.savePreferences")}
             </Button>
           </div>
         </div>

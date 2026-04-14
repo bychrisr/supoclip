@@ -754,6 +754,32 @@ def create_assemblyai_subtitles(
         )
 
 
+_PUNCT_TOKENS = {",", ".", "!", "?", ";", ":", "…"}
+
+
+def _normalize_subtitle_text(words: list[str]) -> str:
+    """
+    Join tokens into human-readable subtitles (PT-BR friendly).
+    - Prevent spaces before punctuation (", . ! ? ; : …")
+    - Handle punctuation tokens that come separated from words
+    """
+    parts: list[str] = []
+    for raw in words:
+        token = (raw or "").strip()
+        if not token:
+            continue
+        if token in _PUNCT_TOKENS and parts:
+            parts[-1] = f"{parts[-1]}{token}"
+        else:
+            parts.append(token)
+    text = " ".join(parts)
+    for p in _PUNCT_TOKENS:
+        text = text.replace(f" {p}", p)
+    while "  " in text:
+        text = text.replace("  ", " ")
+    return text.strip()
+
+
 def create_static_subtitles(
     relevant_words: List[Dict],
     video_width: int,
@@ -784,7 +810,7 @@ def create_static_subtitles(
         if segment_duration < 0.1:
             continue
 
-        text = " ".join(word["text"] for word in word_group)
+        text = _normalize_subtitle_text([str(word.get("text", "")) for word in word_group])
 
         try:
             stroke_color = template.get("stroke_color", "black")
@@ -1044,7 +1070,9 @@ def create_bounce_subtitles(
         end_time = word_group[-1]["end"] / 1000.0
         group_duration = max(0.05, end_time - start_time)
 
-        subtitle_text = " ".join(word["text"] for word in word_group)
+        subtitle_text = _normalize_subtitle_text(
+            [str(word.get("text", "")) for word in word_group]
+        )
         try:
             # Keyframe 1: slightly larger and above
             big_size = int(calculated_font_size * 1.10)

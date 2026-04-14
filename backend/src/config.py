@@ -57,6 +57,35 @@ class Config:
             "FAST_MODE_TRANSCRIPT_MODEL", "nano"
         )
 
+        # Transcription localization
+        # "pt" is a sensible default for BR-focused UX; set to "auto"/"none" to disable hints.
+        self.transcription_language_hint = os.getenv(
+            "TRANSCRIPTION_LANGUAGE_HINT", "pt"
+        ).strip()
+
+        # External imports (Drive/Vimeo/Loom/Direct URL)
+        self.import_allowed_hosts = self._get_csv_env(
+            "IMPORT_ALLOWED_HOSTS",
+            [
+                "drive.google.com",
+                "docs.google.com",
+                "www.googleapis.com",
+                "vimeo.com",
+                "player.vimeo.com",
+                "www.loom.com",
+            ],
+        )
+        self.import_max_file_bytes = int(os.getenv("IMPORT_MAX_FILE_BYTES", str(1024**3)))
+        self.import_max_redirects = int(os.getenv("IMPORT_MAX_REDIRECTS", "5"))
+        self.import_connect_timeout_seconds = float(
+            os.getenv("IMPORT_CONNECT_TIMEOUT_SECONDS", "10")
+        )
+        self.import_read_timeout_seconds = float(
+            os.getenv("IMPORT_READ_TIMEOUT_SECONDS", "60")
+        )
+        # Optional: gate passing provider API tokens from clients in dev
+        self.import_dev_token = self._get_optional_env("IMPORT_DEV_TOKEN")
+
     @staticmethod
     def _get_optional_env(name: str):
         value = os.getenv(name)

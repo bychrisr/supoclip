@@ -24,6 +24,7 @@ from .config import Config
 from .database import init_db, close_db, get_db
 from .workers.job_queue import JobQueue
 from .api.routes import tasks
+from .api.routes.imports import router as imports_router
 from .observability import (
     TRACE_HEADER,
     clear_trace_id,
@@ -191,6 +192,9 @@ app.include_router(media_router)
 from .api.routes.feedback import router as feedback_router
 
 app.include_router(feedback_router)
+
+# Imports (Google Drive/Vimeo/Loom/Direct URL)
+app.include_router(imports_router)
 
 
 @app.get("/")

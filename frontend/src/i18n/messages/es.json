@@ -1,0 +1,69 @@
+{
+  "app": {
+    "description": "Convierte videos largos en shorts listos para viralizar."
+  },
+  "nav": {
+    "allGenerations": "Todas las generaciones",
+    "admin": "Admin",
+    "signOut": "Salir",
+    "settings": "Configuración",
+    "back": "Volver"
+  },
+  "home": {
+    "createNewClip": "Crear nuevo clip",
+    "subtitle": "Pega un enlace de YouTube o sube un video — la IA hace el resto.",
+    "youtubeUrl": "URL de YouTube",
+    "uploadVideo": "Subir video",
+    "dropzoneTitle": "Suelta un archivo aquí o haz clic para buscar",
+    "dropzoneHint": "MP4, MOV, AVI hasta 500MB",
+    "processing": "Procesando",
+    "processVideo": "Procesar video",
+    "processingEllipsis": "Procesando...",
+    "uploadingVideo": "Subiendo archivo de video..."
+  },
+  "tasks": {
+    "status": {
+      "completed": "Completado",
+      "processing": "Procesando",
+      "queued": "En cola",
+      "error": "Error"
+    }
+  },
+  "list": {
+    "title": "Todas las generaciones",
+    "subtitle": "Ve y gestiona todas tus generaciones de clips",
+    "signInRequiredTitle": "Inicio de sesión requerido",
+    "signInRequiredSubtitle": "Necesitas iniciar sesión para ver tus generaciones.",
+    "noGenerationsTitle": "Aún no hay generaciones",
+    "noGenerationsSubtitle": "Empieza procesando tu primer video para crear clips.",
+    "createFirst": "Crear nueva generación"
+  },
+  "settings": {
+    "title": "Configuración",
+    "subtitle": "Configura tus preferencias predeterminadas para generar clips",
+    "signInRequiredTitle": "Inicio de sesión requerido",
+    "signInRequiredSubtitle": "Necesitas iniciar sesión para acceder a tu configuración",
+    "defaultFontTitle": "Configuración de fuente predeterminada",
+    "defaultFontSubtitle": "Estas configuraciones se aplicarán a todas las tareas nuevas",
+    "fontFamily": "Familia tipográfica",
+    "uploadCustomFont": "Subir fuente personalizada (.ttf/.otf)",
+    "onlyTtfOtf": "Solo se admiten archivos .ttf y .otf para fuentes personalizadas.",
+    "previewSubtitle": "Tus subtítulos se verán así",
+    "manageBilling": "Administrar facturación",
+    "upgradeToPro": "Mejorar a Pro",
+    "savePreferences": "Guardar preferencias",
+    "savingEllipsis": "Guardando...",
+    "savedSuccess": "¡Preferencias guardadas correctamente!",
+    "loadingEllipsis": "Cargando..."
+  },
+  "auth": {
+    "noAccount": "¿No tienes una cuenta?",
+    "haveAccount": "¿Ya tienes una cuenta?",
+    "signUp": "Regístrate",
+    "signIn": "Iniciar sesión"
+  },
+  "errors": {
+    "generic": "Algo salió mal. Inténtalo de nuevo."
+  }
+}
+

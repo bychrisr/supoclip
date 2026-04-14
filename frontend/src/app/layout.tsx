@@ -3,6 +3,9 @@ import { Geist, Geist_Mono, Syne } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { FeedbackButton } from "@/components/feedback-button";
+import { NextIntlClientProvider } from "next-intl";
+import { getMessages } from "@/i18n/get-messages";
+import { intlLocaleByAppLocale } from "@/i18n/config";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,15 +31,24 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const messages = await getMessages("pt");
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} ${syne.variable} antialiased`}>
-        {children}
+    <html lang="pt-BR">
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} ${syne.variable} antialiased`}
+      >
+        <NextIntlClientProvider
+          locale={intlLocaleByAppLocale.pt}
+          messages={messages}
+          timeZone="America/Sao_Paulo"
+        >
+          {children}
+        </NextIntlClientProvider>
         <FeedbackButton />
         <Toaster />
       </body>
