@@ -94,6 +94,30 @@ interface FontOption {
   display_name: string;
 }
 
+type ExportPreset = "tiktok" | "reels" | "shorts" | "youtube" | "square" | "portrait";
+type CropMode = "face" | "center";
+
+function formatEta(totalSeconds: number) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const mins = Math.floor(s / 60);
+  const secs = s % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function getFilenameFromContentDisposition(contentDisposition: string | null) {
+  if (!contentDisposition) return null;
+  const filenameStarMatch = contentDisposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (filenameStarMatch?.[1]) {
+    try {
+      return decodeURIComponent(filenameStarMatch[1]);
+    } catch {
+      return filenameStarMatch[1];
+    }
+  }
+  const filenameMatch = contentDisposition.match(/filename\s*=\s*"?([^"]+)"?/i);
+  return filenameMatch?.[1] ?? null;
+}
+
 export default function TaskPage() {
   const params = useParams();
   const router = useRouter();
@@ -117,7 +141,9 @@ export default function TaskPage() {
   const [captionText, setCaptionText] = useState("");
   const [captionPosition, setCaptionPosition] = useState("bottom");
   const [highlightWords, setHighlightWords] = useState("");
-  const [exportPreset, setExportPreset] = useState("tiktok");
+  const [exportPreset, setExportPreset] = useState<ExportPreset>("tiktok");
+  const [exportCropMode, setExportCropMode] = useState<CropMode>("face");
+  const [exportingClipId, setExportingClipId] = useState<string | null>(null);
 
   const [projectFontFamily, setProjectFontFamily] = useState("TikTokSans-Regular");
   const [projectFontSize, setProjectFontSize] = useState("24");
@@ -130,6 +156,8 @@ export default function TaskPage() {
     Array<{ id: string; name: string; description: string; animation: string }>
   >([]);
   const hasTriggeredAutoRefresh = useRef(false);
+  const progressSamplesRef = useRef<Array<{ t: number; p: number }>>([]);
+  const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   const taskApiUrl = "/api/tasks";
@@ -259,11 +287,20 @@ export default function TaskPage() {
 
     console.log("📡 Connected to SSE for real-time progress");
 
+    const pushProgressSample = (p: number) => {
+      const t = Date.now();
+      const clamped = Math.max(0, Math.min(100, Number(p) || 0));
+      const next = [...progressSamplesRef.current, { t, p: clamped }];
+      const cutoff = t - 45_000; // rolling window
+      progressSamplesRef.current = next.filter((s) => s.t >= cutoff);
+    };
+
     eventSource.addEventListener("status", (e) => {
       const data = JSON.parse(e.data);
       console.log("📊 Status:", data);
       setProgress(data.progress || 0);
       setProgressMessage(data.message || "");
+      pushProgressSample(data.progress || 0);
 
       if (data.status === "completed") {
         void fetchTaskStatus().then(() => triggerAutoRefresh());
@@ -275,6 +312,7 @@ export default function TaskPage() {
       console.log("📈 Progress:", data);
       setProgress(data.progress || 0);
       setProgressMessage(data.message || "");
+      pushProgressSample(data.progress || 0);
 
       // Update task status if provided
       if (data.status) {
@@ -311,6 +349,53 @@ export default function TaskPage() {
       eventSource.close();
     };
   }, [params.id, task?.status, fetchTaskStatus, taskApiUrl, triggerAutoRefresh]); // Re-run when task status changes
+
+  // ETA calculation: recompute ~every 2s from recent progress rate
+  useEffect(() => {
+    const taskStatus = task?.status;
+    if (taskStatus !== "queued" && taskStatus !== "processing") {
+      setEtaSeconds(null);
+      progressSamplesRef.current = [];
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      const samples = progressSamplesRef.current;
+      if (samples.length < 2) {
+        setEtaSeconds(null);
+        return;
+      }
+
+      const last = samples[samples.length - 1];
+      const targetT = last.t - 10_000;
+      let base = samples[0];
+      for (let i = samples.length - 1; i >= 0; i -= 1) {
+        if (samples[i].t <= targetT) {
+          base = samples[i];
+          break;
+        }
+      }
+
+      const dp = last.p - base.p;
+      const dt = (last.t - base.t) / 1000;
+      if (dt <= 0 || dp <= 0) {
+        setEtaSeconds(null);
+        return;
+      }
+
+      const rate = dp / dt; // percent per second
+      const remaining = Math.max(0, 100 - last.p);
+      const eta = remaining / rate;
+      if (!Number.isFinite(eta) || eta <= 0 || last.p < 1) {
+        setEtaSeconds(null);
+        return;
+      }
+
+      setEtaSeconds(Math.min(eta, 60 * 60));
+    }, 2000);
+
+    return () => window.clearInterval(interval);
+  }, [task?.status]);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -536,24 +621,37 @@ export default function TaskPage() {
   const handleExportClip = async (clipId: string, fallbackFilename: string) => {
     if (!session?.user?.id || !task?.id) return;
 
-    const response = await fetch(`${taskApiUrl}/${task.id}/clips/${clipId}/export?preset=${exportPreset}`, {
-      cache: "no-store",
-    });
+    setExportingClipId(clipId);
+    try {
+      const qs = new URLSearchParams({
+        preset: exportPreset,
+        crop_mode: exportCropMode,
+      });
+      const response = await fetch(`${taskApiUrl}/${task.id}/clips/${clipId}/export?${qs.toString()}`, {
+        cache: "no-store",
+      });
 
-    if (!response.ok) {
-      alert(await buildSupportError(response, "Failed to export clip"));
-      return;
+      if (!response.ok) {
+        alert(await buildSupportError(response, "Failed to export clip"));
+        return;
+      }
+
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+
+      const headerFilename = getFilenameFromContentDisposition(response.headers.get("content-disposition"));
+      const safeFallbackBase = fallbackFilename.replace(/\.mp4$/i, "");
+      link.download = headerFilename || `${safeFallbackBase}_${exportPreset}_${exportCropMode}.mp4`;
+
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(blobUrl);
+    } finally {
+      setExportingClipId((current) => (current === clipId ? null : current));
     }
-
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = blobUrl;
-    link.download = `${fallbackFilename.replace(/\.mp4$/i, "")}_${exportPreset}.mp4`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(blobUrl);
   };
 
   if (isLoading) {
@@ -757,7 +855,10 @@ export default function TaskPage() {
                     style={{ width: `${progress}%` }}
                   />
                 </div>
-                <p className="text-[11px] text-neutral-400 text-center mt-3 tabular-nums">{progress}%</p>
+                <p className="text-[11px] text-neutral-400 text-center mt-3 tabular-nums">
+                  {progress}%
+                  {etaSeconds != null && <span className="ml-2">ETA {formatEta(etaSeconds)}</span>}
+                </p>
               </div>
             )}
           </div>
@@ -1091,9 +1192,14 @@ export default function TaskPage() {
                             Download
                           </a>
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => handleExportClip(clip.id, clip.filename)}>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={exportingClipId === clip.id}
+                          onClick={() => handleExportClip(clip.id, clip.filename)}
+                        >
                           <Download className="w-4 h-4" />
-                          Export
+                          {exportingClipId === clip.id ? "Exporting..." : "Export"}
                         </Button>
                         <Select value={exportPreset} onValueChange={setExportPreset}>
                           <SelectTrigger className="h-8 w-28">
@@ -1103,6 +1209,18 @@ export default function TaskPage() {
                             <SelectItem value="tiktok">TikTok</SelectItem>
                             <SelectItem value="reels">Reels</SelectItem>
                             <SelectItem value="shorts">Shorts</SelectItem>
+                            <SelectItem value="youtube">YouTube</SelectItem>
+                            <SelectItem value="square">Square</SelectItem>
+                            <SelectItem value="portrait">Portrait</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select value={exportCropMode} onValueChange={setExportCropMode}>
+                          <SelectTrigger className="h-8 w-28">
+                            <SelectValue placeholder="Crop" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="face">Face</SelectItem>
+                            <SelectItem value="center">Center</SelectItem>
                           </SelectContent>
                         </Select>
                         <Button

@@ -727,6 +727,14 @@ def create_assemblyai_subtitles(
             effective_template,
             effective_font_family,
         )
+    elif animation_type == "bounce":
+        return create_bounce_subtitles(
+            relevant_words,
+            video_width,
+            video_height,
+            effective_template,
+            effective_font_family,
+        )
     elif animation_type == "fade":
         return create_fade_subtitles(
             relevant_words,
@@ -1005,6 +1013,73 @@ def create_pop_subtitles(
             continue
 
     logger.info(f"Created {len(subtitle_clips)} pop subtitle elements")
+    return subtitle_clips
+
+
+def create_bounce_subtitles(
+    relevant_words: List[Dict],
+    video_width: int,
+    video_height: int,
+    template: Dict,
+    font_family: str,
+) -> List[TextClip]:
+    """Create bounce-in subtitles (cheap 2-keyframe animation per group)."""
+    subtitle_clips = []
+    processor = VideoProcessor(
+        font_family, template["font_size"], template["font_color"]
+    )
+
+    calculated_font_size = get_scaled_font_size(template["font_size"], video_width)
+    position_y = template.get("position_y", 0.75)
+    max_text_width = get_subtitle_max_width(video_width)
+
+    words_per_subtitle = 3
+    bounce_duration = 0.16
+    for i in range(0, len(relevant_words), words_per_subtitle):
+        word_group = relevant_words[i : i + words_per_subtitle]
+        if not word_group:
+            continue
+
+        start_time = word_group[0]["start"] / 1000.0
+        end_time = word_group[-1]["end"] / 1000.0
+        group_duration = max(0.05, end_time - start_time)
+
+        subtitle_text = " ".join(word["text"] for word in word_group)
+        try:
+            # Keyframe 1: slightly larger and above
+            big_size = int(calculated_font_size * 1.10)
+            keyframe = processor.create_text_clip(
+                subtitle_text,
+                big_size,
+                template["font_color"],
+                template.get("stroke_color"),
+                template.get("stroke_width", 0),
+                max_text_width,
+            ).with_start(start_time).with_duration(min(bounce_duration, group_duration))
+
+            keyframe_y = int(video_height * position_y) - int(big_size * 0.25)
+            keyframe = keyframe.with_position(("center", keyframe_y))
+
+            # Keyframe 2: normal
+            normal = processor.create_text_clip(
+                subtitle_text,
+                calculated_font_size,
+                template["font_color"],
+                template.get("stroke_color"),
+                template.get("stroke_width", 0),
+                max_text_width,
+            ).with_start(start_time + min(bounce_duration, group_duration)).with_duration(
+                max(0.01, group_duration - min(bounce_duration, group_duration))
+            )
+
+            normal_y = int(video_height * position_y)
+            normal = normal.with_position(("center", normal_y))
+
+            subtitle_clips.extend([keyframe, normal])
+        except Exception as e:
+            logger.warning(f"Failed to create bounce subtitle: {e}")
+
+    logger.info(f"Created {len(subtitle_clips)} bounce subtitle elements")
     return subtitle_clips
 
 

@@ -29,6 +29,7 @@ from fastapi import Depends
 logger = logging.getLogger(__name__)
 config = Config()
 router = APIRouter(tags=["media"])
+MAX_FONT_UPLOAD_BYTES = 5 * 1024 * 1024  # 5MB
 
 
 def _get_authenticated_user_id(request: Request) -> str:
@@ -75,8 +76,7 @@ async def get_font_file(font_name: str, request: Request):
             path=str(font_path),
             media_type=media_type,
             headers={
-                "Cache-Control": "public, max-age=31536000",
-                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "private, max-age=31536000",
             },
         )
     except HTTPException:
@@ -97,11 +97,12 @@ async def upload_font(
         user_id = _get_authenticated_user_id(request)
         billing_service = BillingService(db)
         summary = await billing_service.get_usage_summary(user_id)
-        pro_access = not summary.get("monetization_enabled") or (
-            summary.get("plan") == "pro"
+        is_paid = (
+            bool(summary.get("monetization_enabled"))
+            and (summary.get("plan") not in {None, "", "free"})
             and summary.get("subscription_status") in {"active", "trialing"}
         )
-        if not pro_access:
+        if summary.get("monetization_enabled") and (not is_paid):
             raise HTTPException(
                 status_code=403,
                 detail="Custom font uploads are available for Pro users only",
@@ -109,6 +110,18 @@ async def upload_font(
 
         if not uploaded_file.filename:
             raise HTTPException(status_code=400, detail="Missing file name")
+
+        provided_type = (uploaded_file.content_type or "").lower().strip()
+        allowed_types = {
+            "font/ttf",
+            "font/otf",
+            "application/x-font-ttf",
+            "application/x-font-otf",
+            "application/font-sfnt",
+            "application/octet-stream",
+        }
+        if provided_type and provided_type not in allowed_types:
+            raise HTTPException(status_code=400, detail="Unsupported font content type")
 
         uploaded_filename = uploaded_file.filename or "font.ttf"
         extension = Path(uploaded_filename).suffix.lower()
@@ -128,9 +141,40 @@ async def upload_font(
             target_path = user_fonts_dir / f"{stored_stem}-{suffix}{extension}"
             suffix += 1
 
-        content = await uploaded_file.read()
-        async with aiofiles.open(target_path, "wb") as uploaded_font:
-            await uploaded_font.write(content)
+        header = await uploaded_file.read(4)
+        if len(header) < 4:
+            raise HTTPException(status_code=400, detail="Font file is empty")
+
+        is_ttf = header == b"\x00\x01\x00\x00" or header == b"true" or header == b"ttcf"
+        is_otf = header == b"OTTO"
+        if extension == ".ttf" and not is_ttf:
+            raise HTTPException(status_code=400, detail="Invalid TTF font file")
+        if extension == ".otf" and not is_otf:
+            raise HTTPException(status_code=400, detail="Invalid OTF font file")
+
+        bytes_written = 0
+        try:
+            async with aiofiles.open(target_path, "wb") as uploaded_font:
+                await uploaded_font.write(header)
+                bytes_written += len(header)
+
+                while True:
+                    chunk = await uploaded_file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    bytes_written += len(chunk)
+                    if bytes_written > MAX_FONT_UPLOAD_BYTES:
+                        raise HTTPException(
+                            status_code=413, detail="Font file is too large"
+                        )
+                    await uploaded_font.write(chunk)
+        except Exception:
+            try:
+                if target_path.exists():
+                    target_path.unlink()
+            except Exception:
+                pass
+            raise
 
         logger.info(f"Uploaded font: {target_path.name}")
 

@@ -136,6 +136,9 @@ async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
     if not raw_source or not raw_source.get("url"):
         raise HTTPException(status_code=400, detail="Source URL is required")
 
+    if not is_font_accessible(font_family, user_id):
+        raise HTTPException(status_code=400, detail="Selected font is not available")
+
     try:
         billing_service = BillingService(db)
         await billing_service.assert_can_create_task(user_id)
@@ -641,6 +644,7 @@ async def export_clip(
     clip_id: str,
     request: Request,
     preset: str = "tiktok",
+    crop_mode: str = "face",
     db: AsyncSession = Depends(get_db),
 ):
     """Export clip with a social platform preset."""
@@ -660,10 +664,26 @@ async def export_clip(
 
         from pathlib import Path
 
+        crop_mode = (crop_mode or "face").lower().strip()
+        if crop_mode not in {"face", "center"}:
+            crop_mode = "face"
+
+        user_id = _get_user_id_from_headers(request)
+        billing_service = BillingService(db)
+        summary = await billing_service.get_usage_summary(user_id)
+        is_paid = (
+            bool(summary.get("monetization_enabled"))
+            and (summary.get("plan") not in {None, "", "free"})
+            and summary.get("subscription_status") in {"active", "trialing"}
+        )
+        add_watermark = bool(summary.get("monetization_enabled")) and (not is_paid)
+
         output_path = export_with_preset(
             Path(clip["file_path"]),
             Path(config.temp_dir) / "exports",
             preset_name,
+            crop_mode=crop_mode,
+            add_watermark=add_watermark,
         )
 
         download_name = f"{Path(clip['filename']).stem}_{preset_name}.mp4"

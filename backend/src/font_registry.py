@@ -5,6 +5,7 @@ import re
 SUPPORTED_FONT_EXTENSIONS = (".ttf", ".otf")
 FONTS_DIR = Path(__file__).parent.parent / "fonts"
 USER_FONTS_DIR = FONTS_DIR / "users"
+MAX_FONT_NAME_LENGTH = 128
 
 
 def _display_name(font_stem: str) -> str:
@@ -50,13 +51,28 @@ def get_available_fonts(user_id: str | None = None) -> list[dict[str, Any]]:
     return sorted(fonts, key=lambda font: font["display_name"])
 
 
+def _is_safe_font_request(font_name: str) -> bool:
+    requested = (font_name or "").strip()
+    if not requested:
+        return False
+    if len(requested) > MAX_FONT_NAME_LENGTH:
+        return False
+    if "\x00" in requested:
+        return False
+    if "/" in requested or "\\" in requested:
+        return False
+    if ".." in requested:
+        return False
+    return True
+
+
 def find_font_path(
     font_name: str,
     user_id: str | None = None,
     allow_all_user_fonts: bool = False,
 ) -> Path | None:
-    requested = font_name.strip()
-    if not requested:
+    requested = (font_name or "").strip()
+    if not _is_safe_font_request(requested):
         return None
 
     search_dirs = [FONTS_DIR]

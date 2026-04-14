@@ -33,17 +33,21 @@ export default function SettingsPage() {
   const [fontFamily, setFontFamily] = useState("TikTokSans-Regular");
   const [fontSize, setFontSize] = useState(24);
   const [fontColor, setFontColor] = useState("#FFFFFF");
-  const [availableFonts, setAvailableFonts] = useState<Array<{ name: string, display_name: string }>>([]);
+  const [availableFonts, setAvailableFonts] = useState<Array<{ name: string; display_name: string; format?: string }>>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isFetching, setIsFetching] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [isBillingActionLoading, setIsBillingActionLoading] = useState(false);
+  const [isUploadingFont, setIsUploadingFont] = useState(false);
   const { data: session, isPending } = useSession();
   const isAdmin = Boolean((session?.user as { is_admin?: boolean } | undefined)?.is_admin);
 
   const proPriceMonthly = process.env.NEXT_PUBLIC_PRO_PRICE_MONTHLY || "9.99";
+  const canUploadCustomFonts =
+    !billingSummary?.monetization_enabled ||
+    (billingSummary.plan !== "free" && ["active", "trialing"].includes(billingSummary.subscription_status));
 
   // Load available fonts from backend and inject them into the page
   useEffect(() => {
@@ -55,11 +59,13 @@ export default function SettingsPage() {
           setAvailableFonts(data.fonts || []);
 
           // Dynamically load fonts using @font-face
-          const fontFaceStyles = data.fonts.map((font: { name: string }) => {
+          const fontFaceStyles = (data.fonts || []).map((font: { name: string; format?: string }) => {
+            const format = (font.format || "ttf").toLowerCase();
+            const cssFormat = format === "otf" ? "opentype" : "truetype";
             return `
               @font-face {
                 font-family: '${font.name}';
-                src: url('/api/fonts/${font.name}') format('truetype');
+                src: url('/api/fonts/${font.name}') format('${cssFormat}');
                 font-weight: normal;
                 font-style: normal;
               }
@@ -86,6 +92,61 @@ export default function SettingsPage() {
 
     loadFonts();
   }, []);
+
+  const handleFontUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    const isSupported = file.name.toLowerCase().endsWith(".ttf") || file.name.toLowerCase().endsWith(".otf");
+    if (!isSupported) {
+      setError("Only .ttf and .otf files are supported for custom fonts.");
+      return;
+    }
+
+    try {
+      setIsUploadingFont(true);
+      setError(null);
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("/api/fonts/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const text = await response.text();
+      let parsed: { font?: { name?: string }; detail?: string; error?: string } | null = null;
+      try {
+        parsed = (text ? (JSON.parse(text) as { font?: { name?: string }; detail?: string; error?: string }) : null);
+      } catch {
+        parsed = null;
+      }
+
+      if (!response.ok) {
+        setError(parsed?.detail || parsed?.error || "Failed to upload font.");
+        return;
+      }
+
+      if (parsed?.font?.name) {
+        setFontFamily(parsed.font.name);
+      }
+
+      // Reload fonts list so the picker includes the new upload
+      const fontsResponse = await fetch("/api/fonts", { cache: "no-store" });
+      if (fontsResponse.ok) {
+        const fontsData = await fontsResponse.json();
+        setAvailableFonts(fontsData.fonts || []);
+      }
+    } catch (uploadError) {
+      console.error("Failed to upload font:", uploadError);
+      setError("Failed to upload font. Please try again.");
+    } finally {
+      setIsUploadingFont(false);
+    }
+  };
 
   // Load user preferences
   useEffect(() => {
@@ -315,6 +376,27 @@ export default function SettingsPage() {
                     )}
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Custom Font Upload */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-black">
+                  Upload Custom Font (.ttf/.otf)
+                </Label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="file"
+                    accept=".ttf,.otf"
+                    onChange={handleFontUpload}
+                    disabled={isLoading || isUploadingFont || !canUploadCustomFonts}
+                    className="cursor-pointer"
+                  />
+                </div>
+                {!canUploadCustomFonts && (
+                  <p className="text-xs text-gray-500">
+                    Custom font uploads are available on the Pro plan.
+                  </p>
+                )}
               </div>
 
               {/* Font Size Slider */}

@@ -119,7 +119,7 @@ class BillingService:
 
         plan = row["plan"]
         status = row["subscription_status"]
-        is_paid = plan == "pro" and status in {"active", "trialing"}
+        is_paid = plan != "free" and status in {"active", "trialing"}
 
         # Hosted mode requires an active/trialing paid subscription.
         if not is_paid:
