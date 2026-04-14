@@ -17,7 +17,7 @@ datasource db {
 
 // Better Auth User model with backend compatibility
 model User {
-  id            String    @id @default(uuid())
+  id            String    @id @default(dbgenerated("uuid_generate_v4()::text")) @db.VarChar(36)
   name          String
   email         String    @unique
   emailVerified Boolean   @default(false)
@@ -54,16 +54,30 @@ model User {
 }
 
 model Task {
-  id                   String    @id @default(uuid())
-  user_id              String
-  source_id            String?
-  generated_clips_ids  String[]
+  id                   String    @id @default(dbgenerated("uuid_generate_v4()::text")) @db.VarChar(36)
+  user_id              String    @db.VarChar(36)
+  source_id            String?   @db.VarChar(36)
+  generated_clips_ids  String[]?
   status               String    @default("pending") @db.VarChar(20)
+
+  // Progress tracking fields
+  progress             Int?      @default(0)
+  progress_message     String?
 
   // Font customization fields
   font_family          String?   @default("TikTokSans-Regular") @db.VarChar(100)
   font_size            Int?      @default(24)
   font_color           String?   @default("#FFFFFF") @db.VarChar(7)
+
+  // Caption template and B-roll options
+  caption_template     String?   @default("default") @db.VarChar(50)
+  include_broll        Boolean?  @default(false)
+  processing_mode      String    @default("fast") @db.VarChar(20)
+  started_at           DateTime? @db.Timestamptz
+  completed_at         DateTime? @db.Timestamptz
+  cache_hit            Boolean   @default(false)
+  error_code           String?   @db.VarChar(80)
+  stage_timings_json   String?
 
   created_at           DateTime  @default(now()) @db.Timestamptz
   updated_at           DateTime  @default(now()) @updatedAt @db.Timestamptz
@@ -80,39 +94,43 @@ model Task {
 }
 
 model Source {
-  id         String   @id @default(uuid())
+  id         String   @id @default(dbgenerated("uuid_generate_v4()::text")) @db.VarChar(36)
   type       String   @db.VarChar(20)
   title      String   @db.VarChar(500)
+  url        String?  @db.VarChar(1000)
+  user_id    String?  @db.VarChar(36)
   created_at DateTime @default(now()) @db.Timestamptz
   updated_at DateTime @default(now()) @updatedAt @db.Timestamptz
 
   // Relationships
   tasks      Task[]
+  user       User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
 
   @@index([created_at])
+  @@index([user_id])
   @@map("sources")
 }
 
 // Better Auth Session management
 model Session {
-  id        String   @id
+  id        String   @id @db.VarChar(36)
   expiresAt DateTime
-  token     String   @unique
+  token     String   @unique @db.VarChar(255)
   createdAt DateTime
   updatedAt DateTime
-  ipAddress String?
+  ipAddress String?  @db.VarChar(255)
   userAgent String?
-  userId    String
+  userId    String   @db.VarChar(36)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("session")
 }
 
 model Account {
-  id                    String    @id
-  accountId             String
-  providerId            String
-  userId                String
+  id                    String    @id @db.VarChar(36)
+  accountId             String    @db.VarChar(255)
+  providerId            String    @db.VarChar(255)
+  userId                String    @db.VarChar(36)
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   accessToken           String?
   refreshToken          String?
@@ -128,9 +146,9 @@ model Account {
 }
 
 model Verification {
-  id         String    @id
-  identifier String
-  value      String
+  id         String    @id @db.VarChar(36)
+  identifier String    @db.VarChar(255)
+  value      String    @db.VarChar(255)
   expiresAt  DateTime
   createdAt  DateTime?
   updatedAt  DateTime?
@@ -139,8 +157,8 @@ model Verification {
 }
 
 model StripeWebhookEvent {
-  id         String   @id
-  type       String
+  id         String   @id @db.VarChar(255)
+  type       String   @db.VarChar(255)
   created_at DateTime @default(now()) @db.Timestamptz
 
   @@map("stripe_webhook_events")

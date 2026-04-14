@@ -98,7 +98,7 @@ class TaskService:
 
         # Create source
         source_id = await self.source_repo.create_source(
-            self.db, source_type=source_type, title=title, url=url
+            self.db, source_type=source_type, title=title, url=url, user_id=user_id
         )
 
         # Create task

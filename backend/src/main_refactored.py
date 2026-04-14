@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import logging
 import time
+import asyncio
 
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,6 +46,8 @@ async def lifespan(app: FastAPI):
     """Application lifespan: startup and shutdown events."""
     # Startup
     logger.info("🚀 Starting SupoClip API...")
+    stop_event = asyncio.Event()
+    cleanup_task: asyncio.Task | None = None
     try:
         await init_db()
         logger.info("✅ Database initialized")
@@ -52,6 +55,11 @@ async def lifespan(app: FastAPI):
         # Initialize job queue
         await JobQueue.get_pool()
         logger.info("✅ Job queue initialized")
+
+        # Start processing_cache cleanup loop (best-effort)
+        from .services.processing_cache_cleanup import processing_cache_cleanup_loop
+
+        cleanup_task = asyncio.create_task(processing_cache_cleanup_loop(stop_event))
 
         # Run transcription provider health check (Gemini → AssemblyAI fallback)
         from .services.transcription_service import TranscriptionService
@@ -63,6 +71,9 @@ async def lifespan(app: FastAPI):
         yield
 
     finally:
+        stop_event.set()
+        if cleanup_task is not None:
+            cleanup_task.cancel()
         # Shutdown
         logger.info("🛑 Shutting down SupoClip API...")
         await close_db()

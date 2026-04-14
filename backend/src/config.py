@@ -86,6 +86,17 @@ class Config:
         # Optional: gate passing provider API tokens from clients in dev
         self.import_dev_token = self._get_optional_env("IMPORT_DEV_TOKEN")
 
+        # Processing cache TTL + cleanup loop
+        self.processing_cache_ttl_seconds = int(
+            os.getenv("PROCESSING_CACHE_TTL_SECONDS", "604800")
+        )  # 7 days
+        self.processing_cache_cleanup_interval_seconds = int(
+            os.getenv("PROCESSING_CACHE_CLEANUP_INTERVAL_SECONDS", "3600")
+        )  # 1 hour
+        self.processing_cache_cleanup_batch_size = int(
+            os.getenv("PROCESSING_CACHE_CLEANUP_BATCH_SIZE", "2000")
+        )
+
     @staticmethod
     def _get_optional_env(name: str):
         value = os.getenv(name)

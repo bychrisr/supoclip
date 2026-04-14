@@ -35,6 +35,120 @@ class Base(DeclarativeBase):
     pass
 
 
+def _split_sql_statements(sql: str) -> list[str]:
+    """
+    Split a SQL file into statements safe for asyncpg.
+
+    Handles:
+    - semicolons inside single/double quotes
+    - dollar-quoted blocks (DO $$ ... $$;)
+    - line comments (-- ...)
+    - block comments (/* ... */)
+    """
+    out: list[str] = []
+    buf: list[str] = []
+    i = 0
+    n = len(sql)
+
+    in_single = False
+    in_double = False
+    in_line_comment = False
+    in_block_comment = False
+    dollar_tag: str | None = None
+
+    def flush():
+        stmt = "".join(buf).strip()
+        buf.clear()
+        if stmt:
+            out.append(stmt)
+
+    while i < n:
+        ch = sql[i]
+        nxt = sql[i + 1] if i + 1 < n else ""
+
+        if in_line_comment:
+            buf.append(ch)
+            if ch == "\n":
+                in_line_comment = False
+            i += 1
+            continue
+
+        if in_block_comment:
+            buf.append(ch)
+            if ch == "*" and nxt == "/":
+                buf.append(nxt)
+                i += 2
+                in_block_comment = False
+            else:
+                i += 1
+            continue
+
+        # Start comments (only when not inside quotes/dollar)
+        if not in_single and not in_double and dollar_tag is None:
+            if ch == "-" and nxt == "-":
+                buf.append(ch)
+                buf.append(nxt)
+                i += 2
+                in_line_comment = True
+                continue
+            if ch == "/" and nxt == "*":
+                buf.append(ch)
+                buf.append(nxt)
+                i += 2
+                in_block_comment = True
+                continue
+
+        # Dollar-quote open/close (only when not in single/double quotes)
+        if not in_single and not in_double:
+            if dollar_tag is None and ch == "$":
+                # parse tag: $tag$
+                j = i + 1
+                while j < n and sql[j] != "$":
+                    j += 1
+                if j < n and sql[j] == "$":
+                    tag = sql[i : j + 1]  # includes both $
+                    dollar_tag = tag
+                    buf.append(tag)
+                    i = j + 1
+                    continue
+            elif dollar_tag is not None and ch == "$":
+                if sql.startswith(dollar_tag, i):
+                    buf.append(dollar_tag)
+                    i += len(dollar_tag)
+                    dollar_tag = None
+                    continue
+
+        if dollar_tag is None:
+            if ch == "'" and not in_double:
+                # handle escaped '' within strings
+                if in_single and nxt == "'":
+                    buf.append(ch)
+                    buf.append(nxt)
+                    i += 2
+                    continue
+                in_single = not in_single
+                buf.append(ch)
+                i += 1
+                continue
+            if ch == '"' and not in_single:
+                in_double = not in_double
+                buf.append(ch)
+                i += 1
+                continue
+
+        # Statement terminator
+        if ch == ";" and not in_single and not in_double and dollar_tag is None:
+            flush()
+            i += 1
+            continue
+
+        buf.append(ch)
+        i += 1
+
+    flush()
+    return out
+
+
 # Dependency to get database session
 async def get_db():
     async with AsyncSessionLocal() as session:
@@ -74,12 +188,8 @@ async def init_db():
                     continue
 
                 sql = migration_file.read_text()
-                # asyncpg doesn't support multiple statements in one execute(),
-                # so split on semicolons and run each statement individually
-                for statement in sql.split(";"):
-                    statement = statement.strip()
-                    if statement:
-                        await conn.execute(text(statement))
+                for statement in _split_sql_statements(sql):
+                    await conn.execute(text(statement))
                 await conn.execute(
                     text("INSERT INTO schema_migrations (version) VALUES (:version)"),
                     {"version": version},

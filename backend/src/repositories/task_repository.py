@@ -114,6 +114,25 @@ class TaskRepository:
         if not row:
             return None
 
+        # Best-effort: if task_clips exists and has rows, expose generated_clips_ids
+        # from the normalized ordering table to keep API compatibility.
+        try:
+            clip_ids_result = await db.execute(
+                text(
+                    """
+                    SELECT clip_id
+                    FROM task_clips
+                    WHERE task_id = :task_id
+                    ORDER BY position ASC
+                    """
+                ),
+                {"task_id": task_id},
+            )
+            clip_ids_rows = clip_ids_result.fetchall()
+            normalized_clip_ids = [r.clip_id for r in clip_ids_rows] if clip_ids_rows else None
+        except Exception:
+            normalized_clip_ids = None
+
         return {
             "id": row.id,
             "user_id": row.user_id,
@@ -123,7 +142,7 @@ class TaskRepository:
             "status": row.status,
             "progress": getattr(row, "progress", None),
             "progress_message": getattr(row, "progress_message", None),
-            "generated_clips_ids": row.generated_clips_ids,
+            "generated_clips_ids": normalized_clip_ids or row.generated_clips_ids,
             "font_family": row.font_family,
             "font_size": row.font_size,
             "font_color": row.font_color,
@@ -322,6 +341,24 @@ class TaskRepository:
             ),
             {"clip_ids": clip_ids, "task_id": task_id},
         )
+        # Keep normalized ordering table in sync when present.
+        # NOTE: tasks.generated_clips_ids is still kept for backward compatibility.
+        if clip_ids:
+            await db.execute(
+                text("DELETE FROM task_clips WHERE task_id = :task_id"),
+                {"task_id": task_id},
+            )
+            # position is 1-indexed
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO task_clips (task_id, clip_id, position, created_at)
+                    SELECT :task_id, x.clip_id, x.position, NOW()
+                    FROM unnest(:clip_ids::varchar[]) WITH ORDINALITY AS x(clip_id, position)
+                    """
+                ),
+                {"task_id": task_id, "clip_ids": clip_ids},
+            )
         await db.commit()
         logger.info(f"Updated task {task_id} with {len(clip_ids)} clips")
 
@@ -331,15 +368,37 @@ class TaskRepository:
     ) -> List[Dict[str, Any]]:
         """Get all tasks for a user."""
         result = await db.execute(
-            text("""
-                SELECT t.*, s.title as source_title, s.type as source_type,
-                       (SELECT COUNT(*) FROM generated_clips WHERE task_id = t.id) as clips_count
-                FROM tasks t
-                LEFT JOIN sources s ON t.source_id = s.id
-                WHERE t.user_id = :user_id
-                ORDER BY t.created_at DESC
-                LIMIT :limit
-            """),
+            text(
+                """
+                WITH user_tasks AS (
+                    SELECT
+                        t.*,
+                        s.title AS source_title,
+                        s.type AS source_type
+                    FROM tasks t
+                    LEFT JOIN sources s ON t.source_id = s.id
+                    WHERE t.user_id = :user_id
+                    ORDER BY t.created_at DESC
+                    LIMIT :limit
+                ),
+                clips_agg AS (
+                    SELECT
+                        gc.task_id,
+                        COUNT(*)::int AS clips_count
+                    FROM generated_clips gc
+                    WHERE gc.task_id IN (SELECT id FROM user_tasks)
+                    GROUP BY gc.task_id
+                )
+                SELECT
+                    ut.*,
+                    ut.source_title,
+                    ut.source_type,
+                    COALESCE(ca.clips_count, 0) AS clips_count
+                FROM user_tasks ut
+                LEFT JOIN clips_agg ca ON ca.task_id = ut.id
+                ORDER BY ut.created_at DESC
+                """
+            ),
             {"user_id": user_id, "limit": limit},
         )
 
