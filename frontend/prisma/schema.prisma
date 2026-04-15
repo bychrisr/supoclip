@@ -57,7 +57,7 @@ model Task {
   id                   String    @id @default(dbgenerated("uuid_generate_v4()::text")) @db.VarChar(36)
   user_id              String    @db.VarChar(36)
   source_id            String?   @db.VarChar(36)
-  generated_clips_ids  String[]?
+  generated_clips_ids  String[]  @default([])
   status               String    @default("pending") @db.VarChar(20)
 
   // Progress tracking fields

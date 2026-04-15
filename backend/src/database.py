@@ -35,6 +35,25 @@ class Base(DeclarativeBase):
     pass
 
 
+async def set_rls_context(
+    db: AsyncSession, *, user_id: str | None, internal: bool
+) -> None:
+    """
+    Set Postgres session-local settings used by RLS policies.
+
+    - app.user_id: authenticated user id (or empty)
+    - app.internal: '1' enables internal bypass in policies
+    """
+    await db.execute(
+        text("SELECT set_config('app.user_id', :user_id, true)"),
+        {"user_id": user_id or ""},
+    )
+    await db.execute(
+        text("SELECT set_config('app.internal', :internal, true)"),
+        {"internal": "1" if internal else "0"},
+    )
+
+
 def _split_sql_statements(sql: str) -> list[str]:
     """
     Split a SQL file into statements safe for asyncpg.
