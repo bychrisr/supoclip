@@ -47,6 +47,7 @@ model User {
 
   // Relationships
   tasks         Task[]
+  sources       Source[]
   sessions      Session[]
   accounts      Account[]
 
