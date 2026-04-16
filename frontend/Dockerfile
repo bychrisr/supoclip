@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 # Copy dependency manifests and Prisma schema needed by postinstall
 COPY package.json bun.lock ./
 COPY prisma ./prisma
-RUN bun install
+# Frozen lockfile keeps CI/Docker builds reproducible and avoids surprise upgrades
+RUN bun install --frozen-lockfile
 
 # Development stage
 FROM base AS development

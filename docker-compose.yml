@@ -1,5 +1,11 @@
+# Default stack (no profile): postgres + redis + backend + worker — fast rebuilds, no Next.js image.
+# Full stack including Next.js in Docker: docker compose --profile ui up -d
+# Local Next.js (recommended on low-spec machines): copy frontend/env.local.example to frontend/.env.local, then bun/npm run dev
+name: supoclip
+
 services:
   frontend:
+    profiles: ["ui"]
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -80,7 +86,7 @@ services:
       - SELF_HOST=${SELF_HOST:-true}
       - BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
       - AUTH_SIGNATURE_TTL_SECONDS=${AUTH_SIGNATURE_TTL_SECONDS:-300}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3001,http://localhost:3002,http://sp.localhost:3001}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001,http://localhost:3002,http://sp.localhost:3001}
       - FREE_PLAN_TASK_LIMIT=${FREE_PLAN_TASK_LIMIT:-10}
       - PRO_PLAN_TASK_LIMIT=${PRO_PLAN_TASK_LIMIT:-0}
     restart: unless-stopped
@@ -133,7 +139,7 @@ services:
       - SELF_HOST=${SELF_HOST:-true}
       - BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
       - AUTH_SIGNATURE_TTL_SECONDS=${AUTH_SIGNATURE_TTL_SECONDS:-300}
-      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3001,http://localhost:3002,http://sp.localhost:3001}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:3001,http://localhost:3002,http://sp.localhost:3001}
       - FREE_PLAN_TASK_LIMIT=${FREE_PLAN_TASK_LIMIT:-10}
       - PRO_PLAN_TASK_LIMIT=${PRO_PLAN_TASK_LIMIT:-0}
     restart: unless-stopped

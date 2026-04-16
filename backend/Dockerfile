@@ -1,15 +1,15 @@
 # Use Python 3.11 slim image
 FROM python:3.11-slim
 
-# Install system dependencies including ffmpeg
-RUN apt-get update && apt-get install -y \
+# System deps: ffmpeg (video), curl (healthchecks), nodejs (yt-dlp JS runtime for YouTube)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv package manager
-RUN pip install uv
+RUN pip install --no-cache-dir uv
 
 # Set working directory
 WORKDIR /app
@@ -17,13 +17,8 @@ WORKDIR /app
 # Copy pyproject.toml and uv.lock for dependency installation
 COPY pyproject.toml uv.lock* ./
 
-# Create virtual environment and install dependencies using uv sync
-RUN uv venv .venv && uv sync
-
-# Force update yt-dlp to the absolute latest version to handle YouTube API changes
-# Also install from git to get the very latest commits
-RUN uv pip install --upgrade --force-reinstall yt-dlp
-RUN uv pip install --upgrade --force-reinstall "yt-dlp[default]"
+# Create virtual environment and install dependencies (yt-dlp version comes from uv.lock)
+RUN uv venv .venv && uv sync --frozen
 
 # Copy source code
 COPY src/ ./src/
