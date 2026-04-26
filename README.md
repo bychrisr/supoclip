@@ -42,12 +42,22 @@ SupoClip provides the same core functionality without the financial burden:
 
 → ✅ **Customizable** - Modify and extend the codebase to fit your needs
 
+## Features
+
+- 🎥 **AI Video Clipping**: Smart engagement detection using Gemini or AssemblyAI.
+- 💬 **Animated Captions (v2)**: High-performance, unified rendering engine (MoviePy v2) with `pop`, `bounce`, and `fade` effects.
+- 🛡️ **YouTube Resilience**: Built-in **Proxy Rotation** and **User Cookie Bypass** via Settings UI.
+- ⚡ **Real-time Progress**: Server-Sent Events (SSE) for granular task monitoring.
+- 🎨 **Dynamic Templates**: Preset styles (TikTok, MrBeast, Hormozi) with word-level highlighting.
+- 🛠️ **Manual Editor**: Trim, split, and merge clips with custom fonts and multiple aspect ratios (9:16, 1:1, 4:5).
+- 🔐 **Secure & Private**: Cookies and credentials are treated with enterprise-grade security.
+
 ## Quick Start
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- An AssemblyAI API key (for transcription) - [Get one here](https://www.assemblyai.com/)
+- An AssemblyAI API key (v0.63.0+ compatible) - [Get one here](https://www.assemblyai.com/)
 - An LLM provider for AI analysis - OpenAI, Google, Anthropic, or Ollama
 
 ### 1. Clone and Configure
@@ -64,22 +74,12 @@ Create a `.env` file in the root directory:
 ASSEMBLY_AI_API_KEY=your_assemblyai_api_key
 
 # Required: Choose ONE LLM provider and set its API key
-# Option A: Google Gemini (recommended - fast & cost-effective)
 LLM=google-gla:gemini-3-flash-preview
 GOOGLE_API_KEY=your_google_api_key
 
-# Option B: OpenAI GPT-5.2 (best reasoning)
-# LLM=openai:gpt-5.2
-# OPENAI_API_KEY=your_openai_api_key
-
-# Option C: Anthropic Claude
-# LLM=anthropic:claude-4-sonnet
-# ANTHROPIC_API_KEY=your_anthropic_api_key
-
-# Option D: Ollama (local/self-hosted)
-# LLM=ollama:gpt-oss:20b
-# OLLAMA_BASE_URL=http://localhost:11434/v1
-# OLLAMA_API_KEY=your_ollama_api_key  # Optional (Ollama Cloud)
+# Optional: YouTube Bypass (Proxies)
+PROXY_LIST=http://user:pass@ip:port
+PROXY_SERVICE_URL=http://your-proxy-service.com
 
 # Optional: Auth secret (change in production)
 BETTER_AUTH_SECRET=change_this_in_production
@@ -91,62 +91,20 @@ BETTER_AUTH_SECRET=change_this_in_production
 docker-compose up -d
 ```
 
-This starts:
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000 (docs at /docs)
-- **PostgreSQL**: localhost:5432
-- **Redis**: localhost:6379
+### 3. Setup YouTube Cookies (Recommended)
 
-### 3. Wait for Initialization
+To avoid "Video Unavailable" errors, go to `http://localhost:3000/settings` and paste your YouTube cookies in Netscape format.
 
-First-time startup takes a few minutes. Check progress with:
+## Testing
+
+Comprehensive test suites are included for all core components:
 
 ```bash
-docker-compose logs -f
+cd backend
+uv run pytest
 ```
 
-Wait until you see health checks passing for all services.
-
-### 4. Access the App
-
-Open http://localhost:3000 in your browser, create an account, and start clipping!
-
-### Troubleshooting
-
-**Backend fails to start with API key error:**
-- Make sure you've set the correct LLM provider AND its corresponding API key in `.env`
-- Default is `google-gla:gemini-3-flash-preview` which requires `GOOGLE_API_KEY`
-- If using `openai:gpt-5.2`, you MUST set `OPENAI_API_KEY`
-- If using `ollama:*`, run Ollama and (optionally) set `OLLAMA_BASE_URL`
-- Rebuild after changing `.env`: `docker-compose up -d --build`
-
-**Videos stay queued / never process:**
-- Check worker logs: `docker-compose logs -f worker`
-- Ensure Redis is healthy: `docker-compose logs redis`
-- Verify API keys are correct
-
-**Performance tuning (default is fast mode):**
-- `DEFAULT_PROCESSING_MODE=fast|balanced|quality`
-- `FAST_MODE_MAX_CLIPS=4` to cap clip count in fast mode
-- `FAST_MODE_TRANSCRIPT_MODEL=nano` for fastest transcript model
-- View aggregate metrics: `GET /tasks/metrics/performance`
-
-**Prisma errors on Windows:**
-- Run `docker-compose down -v` to clear volumes
-- Run `docker-compose up -d --build` to rebuild
-
-**Frontend shows database errors:**
-- Wait for PostgreSQL to fully initialize (check logs)
-- The database is automatically created on first run
-
-**Font picker is empty / cannot select or upload fonts:**
-- Add fonts to `backend/fonts/` – see [backend/fonts/README.md](backend/fonts/README.md) for TikTok Sans and custom fonts
-- Ensure `BACKEND_AUTH_SECRET` is set in `.env` when using the hosted/monetized setup
-- Font upload is Pro-only when monetization is enabled; self-hosted users can upload freely
-
-### Local Development (Without Docker)
-
-See [CLAUDE.md](CLAUDE.md) for detailed development instructions.
+See [TESTING.md](TESTING.md) for details on unit, integration, and performance tests.
 
 ## License
 
