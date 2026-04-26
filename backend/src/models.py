@@ -73,6 +73,12 @@ class User(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Integration fields
+    youtube_cookies: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    assembly_ai_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    google_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    openrouter_api_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Relationships
     tasks: Mapped[List["Task"]] = relationship(
         "Task", back_populates="user", cascade="all, delete-orphan"

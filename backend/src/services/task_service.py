@@ -169,22 +169,47 @@ class TaskService:
                 progress_message="Starting...",
             )
 
-            # Progress callback wrapper
+            # Progress callback wrapper (QA Audit: Global Telemetry)
+            execution_log_buffer = ["🚀 Task initiated"]
+            if cached_transcript:
+                execution_log_buffer.append("💾 Found cached transcript, will skip transcription step.")
+            if cached_analysis_json:
+                execution_log_buffer.append("💾 Found cached AI analysis, will skip AI step.")
+
             async def update_progress(
                 progress: int, message: str, status: str = "processing"
             ):
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                log_entry = f"[{timestamp}] {message} ({progress}%)"
+                execution_log_buffer.append(log_entry)
+                
+                # We persist the last 30 log entries to avoid DB bloat
+                full_log = "\n".join(execution_log_buffer[-30:])
+
                 await self.task_repo.update_task_status(
                     self.db,
                     task_id,
                     status,
                     progress=progress,
                     progress_message=message,
+                    execution_logs=full_log,
                 )
                 if progress_callback:
                     await progress_callback(progress, message, status)
 
             # Process video with progress updates
             pipeline_start = perf_counter()
+            
+            # Fetch user cookies if available
+            from ..repositories.user_repository import UserRepository
+            user_repo = UserRepository(self.db)
+            user_row = await self.task_repo.get_task_by_id(self.db, task_id)
+            user_id = user_row.get("user_id") if user_row else None
+            cookies_content = await user_repo.get_youtube_cookies(user_id) if user_id else None
+            
+            if cookies_content:
+                logger.info(f"Using custom YouTube cookies for user {user_id}")
+
             result = await self.video_service.process_video_complete(
                 url=url,
                 source_type=source_type,
@@ -196,10 +221,11 @@ class TaskService:
                 output_format=output_format,
                 add_subtitles=add_subtitles,
                 video_quality=video_quality,
-                cached_transcript=cached_transcript,
-                cached_analysis_json=cached_analysis_json,
+                cached_transcript=cached_transcript, # Pass cached data to skip steps
+                cached_analysis_json=cached_analysis_json, # Pass cached data to skip steps
                 progress_callback=update_progress,
                 should_cancel=should_cancel,
+                cookies_content=cookies_content,
             )
             stage_timings["pipeline_seconds"] = round(
                 perf_counter() - pipeline_start, 3
@@ -286,6 +312,12 @@ class TaskService:
 
         except Exception as e:
             logger.error(f"Error processing task {task_id}: {e}")
+            
+            # Error log telemetry
+            error_log = f"❌ FATAL ERROR: {str(e)}"
+            execution_log_buffer.append(error_log)
+            full_log = "\n".join(execution_log_buffer[-30:])
+
             if str(e) == "Task cancelled":
                 await self.task_repo.update_task_status(
                     self.db,
@@ -293,10 +325,15 @@ class TaskService:
                     "cancelled",
                     progress=0,
                     progress_message="Cancelled by user",
+                    execution_logs=full_log,
                 )
                 raise
             await self.task_repo.update_task_status(
-                self.db, task_id, "error", progress_message=str(e)
+                self.db, 
+                task_id, 
+                "error", 
+                progress_message=str(e),
+                execution_logs=full_log,
             )
             error_code = "task_error"
             message = str(e).lower()

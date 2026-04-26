@@ -91,7 +91,7 @@ class TaskRepository:
         try:
             result = await db.execute(
                 text("""
-                    SELECT t.*, s.title as source_title, s.type as source_type, s.url as source_url
+                    SELECT t.*, t.execution_logs, s.title as source_title, s.type as source_type, s.url as source_url
                     FROM tasks t
                     LEFT JOIN sources s ON t.source_id = s.id
                     WHERE t.id = :task_id
@@ -152,6 +152,7 @@ class TaskRepository:
             "cache_hit": getattr(row, "cache_hit", False),
             "error_code": getattr(row, "error_code", None),
             "stage_timings_json": getattr(row, "stage_timings_json", None),
+            "execution_logs": getattr(row, "execution_logs", None),
             "started_at": getattr(row, "started_at", None),
             "completed_at": getattr(row, "completed_at", None),
             "source_url": getattr(row, "source_url", None),
@@ -301,13 +302,15 @@ class TaskRepository:
         status: str,
         progress: Optional[int] = None,
         progress_message: Optional[str] = None,
+        execution_logs: Optional[str] = None,
     ) -> None:
-        """Update task status and optional progress."""
+        """Update task status and optional progress/logs."""
         params = {
             "task_id": task_id,
             "status": status,
             "progress": progress,
             "progress_message": progress_message,
+            "execution_logs": execution_logs,
         }
 
         # Build dynamic query based on what's provided
@@ -318,6 +321,9 @@ class TaskRepository:
 
         if progress_message is not None:
             set_parts.append("progress_message = :progress_message")
+            
+        if execution_logs is not None:
+            set_parts.append("execution_logs = :execution_logs")
 
         set_parts.append("updated_at = NOW()")
 

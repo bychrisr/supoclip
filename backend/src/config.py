@@ -28,6 +28,10 @@ class Config:
         self.redis_host = os.getenv("REDIS_HOST", "localhost")
         self.redis_port = int(os.getenv("REDIS_PORT", "6379"))
 
+        # Proxy configuration for YouTube bypass (QA Audit Item: Resilience)
+        self.proxy_list = self._get_csv_env("PROXY_LIST", [])
+        self.proxy_service_url = self._get_optional_env("PROXY_SERVICE_URL")
+
         # Fail-safe: queued tasks should not stay queued forever
         self.queued_task_timeout_seconds = int(
             os.getenv("QUEUED_TASK_TIMEOUT_SECONDS", "180")
@@ -139,9 +143,9 @@ class Config:
         Falls back to Google for backward compatibility.
         """
         if self.google_api_key:
-            return "google-gla:gemini-3-flash-preview"
+            return "google-gla:gemini-2.5-flash"
         if self.openai_api_key:
             return "openai:gpt-5.2"
         if self.anthropic_api_key:
             return "anthropic:claude-4-sonnet"
-        return "google-gla:gemini-3-flash-preview"
+        return "google-gla:gemini-2.5-flash"
