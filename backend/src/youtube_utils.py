@@ -6,6 +6,7 @@ Optimized for high-quality downloads and better error handling.
 import re
 from urllib.parse import urlparse, parse_qs
 import yt_dlp
+import uuid
 from typing import Optional, Dict, Any
 from pathlib import Path
 import logging
@@ -25,23 +26,24 @@ class YouTubeDownloader:
         self.temp_dir = Path(config.temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
-    # Mapeamento de qualidade → (format string, format_sort)
+    # Format Selection Intelligence (QA Audit: Fidelity)
+    # Prioritizes MP4/H264 for faster editing and better compatibility
     _QUALITY_FORMAT_MAP: Dict[str, tuple[str, list[str]]] = {
         "best": (
-            "bestvideo*+bestaudio/best",
-            ["res", "fps"],
+            "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            ["res:1080", "vcodec:h264", "fps"],
         ),
         "1080p": (
-            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-            ["res:1080", "fps"],
+            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best",
+            ["res:1080", "vcodec:h264"],
         ),
         "720p": (
-            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
-            ["res:720", "fps"],
+            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best",
+            ["res:720", "vcodec:h264"],
         ),
         "480p": (
-            "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best[height<=480]/best",
-            ["res:480", "fps"],
+            "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best",
+            ["res:480", "vcodec:h264"],
         ),
     }
 
@@ -50,6 +52,8 @@ class YouTubeDownloader:
         video_id: str,
         progress_hooks: Optional[list] = None,
         video_quality: str = "best",
+        cookie_file_path: Optional[str] = None,
+        proxy: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Get optimal yt-dlp options for high-quality downloads with enhanced YouTube bypass."""
         output_path = self.temp_dir / f"{video_id}.%(ext)s"
@@ -58,7 +62,7 @@ class YouTubeDownloader:
         fmt, fmt_sort = self._QUALITY_FORMAT_MAP[quality]
         logger.debug(f"[get_optimal_download_options] quality={quality} format={fmt!r}")
 
-        return {
+        opts = {
             "outtmpl": str(output_path),
             "format": fmt,
             "format_sort": fmt_sort,
@@ -96,9 +100,20 @@ class YouTubeDownloader:
                     "player_client": ["web", "android"],
                 }
             },
-            # Usar node como runtime JS para decriptar URLs de alta qualidade
+            # Usar node como runtime JS para decriptar URLs de alta qualidade (Toolbox Standard)
             "js_runtimes": {"node": {}},
         }
+
+        # Add cookie file if provided
+        if cookie_file_path:
+            opts["cookiefile"] = cookie_file_path
+            
+        # Add proxy if provided (QA Audit Item: Resilience)
+        if proxy:
+            opts["proxy"] = proxy
+            logger.info(f"Using proxy for download: {proxy[:15]}...")
+            
+        return opts
 
 
 def _get_local_video_dimensions(path: Path) -> tuple[int, int]:
@@ -175,15 +190,24 @@ def validate_youtube_url(url: str) -> bool:
     return video_id is not None
 
 
-def get_youtube_video_info(url: str) -> Optional[Dict[str, Any]]:
+def get_youtube_video_info(url: str, cookies_content: Optional[str] = None, proxy: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Get comprehensive video information without downloading.
-    Returns title, duration, description, and other metadata.
+    Supports cookies and proxies to avoid early blocks.
     """
     video_id = get_youtube_video_id(url)
     if not video_id:
         logger.error(f"Invalid YouTube URL: {url}")
         return None
+
+    # Handle temporary cookie file for info extraction
+    cookie_file_path = None
+    if cookies_content:
+        temp_dir = Path(config.temp_dir)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        cookie_file_path = temp_dir / f"info_cookies_{uuid.uuid4()}.txt"
+        with open(cookie_file_path, "w") as f:
+            f.write(cookies_content)
 
     try:
         ydl_opts = {
@@ -199,9 +223,16 @@ def get_youtube_video_info(url: str) -> Optional[Dict[str, Any]]:
                 "Connection": "keep-alive",
             },
             "nocheckcertificate": True,
+            "js_runtimes": {"node": {}}, # Toolbox robustness
         }
+        
+        if cookie_file_path:
+            ydl_opts["cookiefile"] = str(cookie_file_path)
+        if proxy:
+            ydl_opts["proxy"] = proxy
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Use extract_info with download=False to get the full JSON dump (Toolbox pattern)
             info = ydl.extract_info(url, download=False)
 
             return {
@@ -214,15 +245,21 @@ def get_youtube_video_info(url: str) -> Optional[Dict[str, Any]]:
                 "view_count": info.get("view_count"),
                 "like_count": info.get("like_count"),
                 "thumbnail": info.get("thumbnail"),
-                "format_id": info.get("format_id"),
+                "formats": info.get("formats", []), # Expose formats for smarter quality selection
                 "resolution": info.get("resolution"),
                 "fps": info.get("fps"),
-                "filesize": info.get("filesize"),
+                "filesize": info.get("filesize_approx") or info.get("filesize"),
             }
 
     except Exception as e:
         logger.error(f"Error extracting video info: {e}")
         return None
+    finally:
+        if cookie_file_path and cookie_file_path.exists():
+            try:
+                cookie_file_path.unlink()
+            except Exception:
+                pass
 
 
 def get_youtube_video_title(url: str) -> Optional[str]:
@@ -239,13 +276,11 @@ def download_youtube_video(
     max_retries: int = 3,
     progress_cb: Optional[Any] = None,
     video_quality: str = "best",
+    cookies_content: Optional[str] = None,
 ) -> Optional[Path]:
     """
     Download YouTube video com retry e progresso em tempo real.
-
-    progress_cb: callable síncrono chamado com (percent: float, downloaded_bytes: int,
-                 total_bytes: int, speed: str, eta: int) durante o download.
-                 Chamado no máximo 1x por segundo para não saturar Redis.
+    Suporta cookies para evitar detecção de bot.
     """
     logger.info(f"Starting YouTube download: {url} quality={video_quality!r}")
 
@@ -255,119 +290,154 @@ def download_youtube_video(
         return None
 
     downloader = YouTubeDownloader()
+    
+    # Handle temporary cookie file
+    cookie_file_path = None
+    if cookies_content:
+        cookie_file_path = downloader.temp_dir / f"cookies_{uuid.uuid4()}.txt"
+        with open(cookie_file_path, "w") as f:
+            f.write(cookies_content)
+        logger.info(f"Using provided YouTube cookies (temp file: {cookie_file_path.name})")
 
-    # Reutiliza arquivo existente se já foi baixado com qualidade suficiente (≥480p).
-    # Evita re-download em tarefas paralelas ou retry para o mesmo vídeo.
-    video_extensions = {".mp4", ".mkv", ".webm"}
-    cached_files = [
-        f for f in downloader.temp_dir.glob(f"{video_id}.*")
-        if f.is_file() and f.suffix.lower() in video_extensions and not f.name.endswith(".part")
-    ]
-    if cached_files:
-        best = max(cached_files, key=lambda f: f.stat().st_size)
-        width, height = _get_local_video_dimensions(best)
-        if height >= 480:
-            logger.info(
-                f"Reusing cached file: {best.name} ({best.stat().st_size // 1024 // 1024}MB, {width}x{height})"
-            )
-            if progress_cb:
-                progress_cb(100.0, best.stat().st_size, best.stat().st_size, "N/A", 0)
-            return best
-        # Baixa qualidade demais — apaga e baixa de novo
-        logger.info(f"Cached file too low quality ({height}p), re-downloading")
-        for f in cached_files:
-            try:
-                f.unlink()
-            except Exception as e:
-                logger.warning(f"Failed to remove stale cache: {f}: {e}")
+    try:
+        # Reutiliza arquivo existente se já foi baixado com qualidade suficiente (≥480p).
+        # Evita re-download em tarefas paralelas ou retry para o mesmo vídeo.
+        video_extensions = {".mp4", ".mkv", ".webm"}
+        cached_files = [
+            f for f in downloader.temp_dir.glob(f"{video_id}.*")
+            if f.is_file() and f.suffix.lower() in video_extensions and not f.name.endswith(".part")
+        ]
+        if cached_files:
+            best = max(cached_files, key=lambda f: f.stat().st_size)
+            width, height = _get_local_video_dimensions(best)
+            if height >= 480:
+                logger.info(
+                    f"Reusing cached file: {best.name} ({best.stat().st_size // 1024 // 1024}MB, {width}x{height})"
+                )
+                if progress_cb:
+                    progress_cb(100.0, best.stat().st_size, best.stat().st_size, "N/A", 0)
+                return best
+            # Baixa qualidade demais — apaga e baixa de novo
+            logger.info(f"Cached file too low quality ({height}p), re-downloading")
+            for f in cached_files:
+                try:
+                    f.unlink()
+                except Exception as e:
+                    logger.warning(f"Failed to remove stale cache: {f}: {e}")
 
-    # Info do vídeo para log e validação
-    video_info = get_youtube_video_info(url)
-    if not video_info:
-        logger.error(f"Could not retrieve video information for: {url}")
-        return None
+        # Info do vídeo para log e validação (QA Audit Item: Resilience)
+        # Try getting info with the best proxy available to avoid early block
+        best_proxy = config.proxy_service_url if config.proxy_service_url else (config.proxy_list[0] if config.proxy_list else None)
+        video_info = get_youtube_video_info(url, cookies_content=cookies_content, proxy=best_proxy)
+        
+        if not video_info:
+            logger.error(f"Could not retrieve video information for: {url}")
+            return None
 
-    logger.info(f"Video: '{video_info.get('title')}' ({video_info.get('duration')}s)")
+        logger.info(f"Video identified: '{video_info.get('title')}' ({video_info.get('duration')}s)")
 
-    duration = video_info.get("duration", 0)
-    if duration > 3600:
-        logger.warning(f"Video duration ({duration}s) exceeds 1h — may take a while")
+        # Hook de progresso para o yt-dlp — chamado a cada chunk baixado.
+        # _last_report[0] = último percent emitido, _last_report[1] = último timestamp
+        _last_report = [0.0, 0.0]
 
-    # Hook de progresso para o yt-dlp — chamado a cada chunk baixado.
-    # _last_report[0] = último percent emitido, _last_report[1] = último timestamp
-    _last_report = [0.0, 0.0]
+        def _yt_dlp_progress_hook(d: dict) -> None:
+            if not progress_cb or d.get("status") != "downloading":
+                return
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            downloaded = d.get("downloaded_bytes") or 0
+            percent = (downloaded / total * 100.0) if total > 0 else 0.0
+            now = time.monotonic()
+            # Emite se avançou ≥1% ou passou ≥1s desde o último report
+            if percent - _last_report[0] >= 1.0 or now - _last_report[1] >= 1.0:
+                _last_report[0] = percent
+                _last_report[1] = now
+                speed = d.get("_speed_str", "N/A")
+                eta = d.get("eta") or 0
+                try:
+                    progress_cb(percent, downloaded, total, speed, eta)
+                except Exception:
+                    pass
 
-    def _yt_dlp_progress_hook(d: dict) -> None:
-        if not progress_cb or d.get("status") != "downloading":
-            return
-        total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-        downloaded = d.get("downloaded_bytes") or 0
-        percent = (downloaded / total * 100.0) if total > 0 else 0.0
-        now = time.monotonic()
-        # Emite se avançou ≥1% ou passou ≥1s desde o último report
-        if percent - _last_report[0] >= 1.0 or now - _last_report[1] >= 1.0:
-            _last_report[0] = percent
-            _last_report[1] = now
-            speed = d.get("_speed_str", "N/A")
-            eta = d.get("eta") or 0
-            try:
-                progress_cb(percent, downloaded, total, speed, eta)
-            except Exception:
-                pass
+        # Proxy Rotation Logic (QA Audit Item: Robustness)
+        # Start with None (no proxy) followed by configured proxies
+        proxies_to_try = [None] + config.proxy_list
+        if config.proxy_service_url:
+            proxies_to_try.append(config.proxy_service_url)
 
-    # Retry com backoff exponencial
-    for attempt in range(max_retries):
-        try:
-            logger.info(f"Download attempt {attempt + 1}/{max_retries}")
+        for proxy in proxies_to_try:
+            proxy_display = proxy[:15] + "..." if proxy else "Direct IP"
+            logger.info(f"Attempting download via {proxy_display}")
 
-            ydl_opts = downloader.get_optimal_download_options(
-                video_id,
-                progress_hooks=[_yt_dlp_progress_hook],
-                video_quality=video_quality,
-            )
+            # Retry com backoff exponencial para cada proxy
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Download attempt {attempt + 1}/{max_retries} via {proxy_display}")
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
-
-                logger.info(f"Searching for downloaded file: {video_id}.*")
-                downloaded_files = [
-                    f for f in downloader.temp_dir.glob(f"{video_id}.*")
-                    if f.is_file() and f.suffix.lower() in video_extensions and not f.name.endswith(".part")
-                ]
-                if downloaded_files:
-                    ranked = []
-                    for candidate in downloaded_files:
-                        width, height = _get_local_video_dimensions(candidate)
-                        ranked.append((height, width, candidate.stat().st_size, candidate))
-                    ranked.sort(reverse=True)
-                    best_file = ranked[0][3]
-                    file_size = best_file.stat().st_size
-                    width, height = _get_local_video_dimensions(best_file)
-                    logger.info(
-                        f"Download successful: {best_file.name} ({file_size // 1024 // 1024}MB, {width}x{height})"
+                    ydl_opts = downloader.get_optimal_download_options(
+                        video_id,
+                        progress_hooks=[_yt_dlp_progress_hook],
+                        video_quality=video_quality,
+                        cookie_file_path=str(cookie_file_path) if cookie_file_path else None,
+                        proxy=proxy
                     )
-                    return best_file
 
-                logger.warning(f"No video file found after download attempt {attempt + 1}")
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([url])
 
-        except yt_dlp.utils.DownloadError as e:
-            logger.warning(f"Download attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.info(f"Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"All download attempts failed for: {url}")
+                        logger.info(f"Searching for downloaded file: {video_id}.*")
+                        downloaded_files = [
+                            f for f in downloader.temp_dir.glob(f"{video_id}.*")
+                            if f.is_file() and f.suffix.lower() in video_extensions and not f.name.endswith(".part")
+                        ]
+                        if downloaded_files:
+                            ranked = []
+                            for candidate in downloaded_files:
+                                width, height = _get_local_video_dimensions(candidate)
+                                ranked.append((height, width, candidate.stat().st_size, candidate))
+                            ranked.sort(reverse=True)
+                            best_file = ranked[0][3]
+                            file_size = best_file.stat().st_size
+                            width, height = _get_local_video_dimensions(best_file)
+                            logger.info(
+                                f"Download successful via {proxy_display}: {best_file.name} ({file_size // 1024 // 1024}MB, {width}x{height})"
+                            )
+                            return best_file
 
-        except Exception as e:
-            logger.error(f"Unexpected error during download attempt {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.info(f"Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"All download attempts failed for: {url}")
+                except yt_dlp.utils.DownloadError as e:
+                    msg = str(e)
+                    logger.warning(f"Download via {proxy_display} failed: {msg}")
 
+                    # Diagnóstico de Precisão (QA Audit: Certainty)
+                    if "429" in msg:
+                        raise Exception(f"YOUTUBE_IP_BLOCKED: O IP do servidor ({proxy_display}) foi bloqueado por excesso de requisições (Erro 429).")
+                    elif "403" in msg or "confirm your age" in msg.lower() or "sign in" in msg.lower():
+                        raise Exception("YOUTUBE_COOKIES_EXPIRED: Seus cookies do YouTube expiraram ou são inválidos. Por favor, atualize-os nas configurações.")
+                    elif "not available on this app" in msg.lower():
+                        raise Exception("YOUTUBE_CLIENT_BLOCKED: O YouTube bloqueou este player específico. Tente usar cookies de uma conta logada diferente.")
+
+                    if "unavailable" in msg.lower():
+                        logger.info(f"Proxy {proxy_display} seems blocked. Rotating...")
+                        break
+
+                    if attempt < max_tries - 1:
+                        wait_time = 2 ** attempt
+                        time.sleep(wait_time)
+                    else:
+                        raise Exception(f"YOUTUBE_UNKNOWN_ERROR: Falha após várias tentativas. Erro: {msg}")
+
+                except Exception as e:
+                    logger.error(f"Unexpected error with proxy {proxy_display}: {e}")
+                    break # Try next proxy on unexpected error
+
+        return None
+    finally:
+        # ALWAYS cleanup cookie file (QA Audit Item: Security)
+        if cookie_file_path and cookie_file_path.exists():
+            try:
+                cookie_file_path.unlink()
+                logger.debug(f"Temporary cookie file removed: {cookie_file_path.name}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary cookie file {cookie_file_path}: {e}")
     return None
 
 

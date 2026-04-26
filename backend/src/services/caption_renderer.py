@@ -73,13 +73,11 @@ class CaptionRenderer:
             method="label",
         ).with_start(start_t).with_duration(duration)
 
-        # Optimized Animations
+        # Optimized Animations (MoviePy v2 Compatible)
         if animation == "pop":
-            # Optimized Pop: uses a single scale effect instead of complex frame-by-frame lambda
-            # Simple scaling over first 0.2s
-            t_clip = t_clip.with_effects([
-                lambda c, st=start_t: c.resized(lambda t: 1.0 + 0.15 * math.sin(math.pi * (t - st) / 0.2) if 0 <= (t - st) < 0.2 else 1.0)
-            ])
+            # Usar dynamic resizing do MoviePy v2
+            # Em vez de with_effects(lambda), usamos resized com a função diretamente
+            t_clip = t_clip.resized(lambda t: 1.0 + 0.15 * math.sin(math.pi * (t - start_t) / 0.2) if 0 <= (t - start_t) < 0.2 else 1.0)
             t_clip = t_clip.with_position(("center", self.y_position))
         
         elif animation == "fade":
@@ -89,9 +87,9 @@ class CaptionRenderer:
             
         elif animation == "bounce":
             orig_y = self.y_position
-            # Optimized Bounce: vertical movement only
+            # Usar dynamic position do MoviePy v2
             t_clip = t_clip.with_position(
-                lambda t, st=start_t: ("center", orig_y - 10 * math.sin(math.pi * (t - st) / 0.3) if 0 <= (t - st) < 0.3 else orig_y)
+                lambda t: ("center", orig_y - 10 * math.sin(math.pi * (t - start_t) / 0.3) if 0 <= (t - start_t) < 0.3 else orig_y)
             )
         else:
             t_clip = t_clip.with_position(("center", self.y_position))
