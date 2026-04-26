@@ -125,20 +125,25 @@ export default function Home() {
   const [outputFormat, setOutputFormat] = useState<"vertical" | "original">("vertical");
   const [addSubtitles, setAddSubtitles] = useState(true);
   const [videoQuality, setVideoQuality] = useState<"best" | "1080p" | "720p" | "480p">("best");
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
   // Latest task state
   const [latestTask, setLatestTask] = useState<LatestTask | null>(null);
   const [isLoadingLatest, setIsLoadingLatest] = useState(false);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
   const taskApiUrl = "/api/tasks";
   const youtubeThumbnailUrl = sourceType === "youtube" ? getYouTubeThumbnailUrl(url) : null;
 
   const refreshFonts = useCallback(async () => {
+    if (!session?.user?.id) return;
+
     try {
       setFontLoadError(null);
       const response = await fetch("/api/fonts", {
         cache: "no-store",
+        headers: {
+          "user_id": session.user.id
+        }
       });
       if (!response.ok) {
         throw new Error(`Failed to load fonts (${response.status})`);
@@ -178,7 +183,7 @@ export default function Home() {
 
   useEffect(() => {
     void refreshFonts();
-  }, [refreshFonts]);
+  }, [refreshFonts, session?.user?.id]);
 
   // Load caption templates and check B-roll availability
   useEffect(() => {

@@ -174,10 +174,15 @@ async def process_video_task(
             return result
 
         except Exception as e:
-            logger.error(f"Task {task_id} failed: {e}", exc_info=True)
+            error_msg = str(e)
+            logger.error(f"Task {task_id} failed: {error_msg}", exc_info=True)
+            
+            # Persistir a mensagem real do erro no banco de dados para o frontend (QA Audit: Transparency)
+            await progress.error(error_msg)
+            
             await _emit_webhook(
                 "task.processing_failed",
-                {"task_id": task_id, "user_id": user_id, "error": str(e)},
+                {"task_id": task_id, "user_id": user_id, "error": error_msg},
             )
             try:
                 job_try = int(ctx.get("job_try", 1))

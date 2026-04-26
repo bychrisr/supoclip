@@ -43,6 +43,8 @@ import {
   Settings2,
   Type,
   Clapperboard,
+  Monitor,
+  Copy,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import Link from "next/link";
@@ -79,6 +81,7 @@ interface TaskDetails {
   status: string;
   progress?: number;
   progress_message?: string;
+  execution_logs?: string;
   clips_count: number;
   created_at: string;
   updated_at: string;
@@ -157,6 +160,7 @@ export default function TaskPage() {
   >([]);
   const progressSamplesRef = useRef<Array<{ t: number; p: number }>>([]);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const [showLogs, setShowLogs] = useState(false);
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   const taskApiUrl = "/api/tasks";
@@ -338,7 +342,7 @@ export default function TaskPage() {
       console.log("🔌 Disconnecting SSE");
       eventSource.close();
     };
-  }, [params.id, task?.status, fetchTaskStatus, taskApiUrl, triggerAutoRefresh]); // Re-run when task status changes
+  }, [params.id, task?.status, fetchTaskStatus, taskApiUrl]); // Re-run when task status changes
 
   // ETA calculation: recompute ~every 2s from recent progress rate
   useEffect(() => {
@@ -861,19 +865,111 @@ export default function TaskPage() {
             </div>
           </div>
         ) : task?.status === "error" ? (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <div className="text-red-600 mb-4">
-                <AlertCircle className="w-12 h-12 mx-auto mb-2" />
-                <h2 className="text-xl font-semibold">Processing Failed</h2>
+          <Card className="border-red-100 bg-red-50/30">
+            <CardContent className="p-12 text-center">
+              <div className="text-red-600 mb-6">
+                <AlertCircle className="w-16 h-16 mx-auto mb-4" />
+                <h2 className="text-2xl font-bold font-syne">Falha no Processamento</h2>
               </div>
-              <p className="text-gray-600 mb-4">There was an error processing your video. Please try again.</p>
-              <Link href="/">
-                <Button>
-                  <ArrowLeft className="w-4 h-4" />
-                  Back to Home
+              <div className="max-w-xl mx-auto space-y-4 mb-8 text-left">
+                <div className="bg-white border border-red-200 rounded-xl overflow-hidden shadow-sm">
+                  <div className="bg-red-50 px-4 py-2 border-b border-red-100 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-red-600">Erro Técnico</span>
+                      <button 
+                        onClick={() => {
+                          navigator.clipboard.writeText(task.progress_message || "");
+                          toast.success("Mensagem de erro copiada!");
+                        }}
+                        className="p-1 hover:bg-red-100 rounded transition-colors text-red-400 hover:text-red-600"
+                        title="Copiar erro"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] border-red-200 text-red-500">Pipeline Halt</Badge>
+                  </div>
+                  <div className="p-5 font-mono text-sm text-red-700 break-words leading-relaxed select-text selection:bg-red-100 selection:text-red-900 cursor-text">
+                    {task.progress_message || "Erro desconhecido durante a execução."}
+                  </div>
+                </div>
+
+                {/* Intelligent Diagnostic */}
+                <div className="p-4 bg-stone-100/50 rounded-lg border border-stone-200 select-text">
+                  <h4 className="text-xs font-bold text-stone-600 uppercase mb-2">Diagnóstico da Aria:</h4>
+                  <p className="text-sm text-stone-600 font-medium">
+                    {task.progress_message?.includes("YOUTUBE_IP_BLOCKED") 
+                      ? "VEREDITO: O IP do servidor está bloqueado. Use um Proxy Residencial ou aguarde o cool-down."
+                      : task.progress_message?.includes("YOUTUBE_COOKIES_EXPIRED")
+                      ? "VEREDITO: Seus cookies expiraram. Gere um novo arquivo cookies.txt e atualize nas Configurações."
+                      : task.progress_message?.includes("YOUTUBE_CLIENT_BLOCKED")
+                      ? "VEREDITO: O YouTube detectou este player. Use cookies de uma conta diferente ou mude de vídeo."
+                      : task.progress_message?.toLowerCase().includes("gemini") || task.progress_message?.toLowerCase().includes("assembly")
+                      ? "VEREDITO: Falha na API de Inteligência Artificial. Verifique suas chaves de acesso."
+                      : "VEREDITO: Ocorreu uma interrupção técnica no pipeline. Verifique os logs detalhados abaixo."}
+                  </p>
+                </div>
+
+                {/* Technical Execution Logs (The Glass Box) */}
+                <div className="mt-6 border-t border-red-100 pt-6">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => setShowLogs(!showLogs)}
+                    className="text-red-400 hover:text-red-600 text-[10px] uppercase tracking-widest p-0 h-auto font-bold flex items-center gap-2"
+                  >
+                    {showLogs ? <X className="w-3 h-3" /> : <Monitor className="w-3 h-3" />}
+                    {showLogs ? "Ocultar Detalhes Técnicos" : "Ver Detalhes Técnicos da Falha"}
+                  </Button>
+                  
+                  {showLogs && (
+                    <div className="mt-4 bg-[#0a0a0a] rounded-xl p-6 font-mono text-[12px] text-red-400/90 overflow-x-auto max-h-[400px] shadow-2xl border border-white/5 ring-1 ring-white/10 select-text selection:bg-red-500/20 selection:text-red-200 cursor-text">
+                      <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3">
+                        <div className="flex items-center gap-2 text-stone-500">
+                          <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                          <span className="uppercase text-[9px] font-bold tracking-tighter">system_execution_trace.log</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => {
+                              navigator.clipboard.writeText(task.execution_logs || "");
+                              toast.success("Logs copiados!");
+                            }}
+                            className="flex items-center gap-1.5 px-2 py-1 bg-white/5 hover:bg-white/10 rounded text-[9px] font-bold text-stone-400 hover:text-white transition-all uppercase tracking-tighter"
+                          >
+                            <Copy className="w-3 h-3" />
+                            Copiar Logs
+                          </button>
+                          <Badge variant="outline" className="text-[9px] border-white/10 text-stone-500">UTF-8</Badge>
+                        </div>
+                      </div>
+                      <pre className="whitespace-pre-wrap leading-loose font-mono">
+                        {task.execution_logs || "Aguardando logs do buffer do sistema..."}
+                        {"\n"}
+                        <span className="animate-pulse">_</span>
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-4 justify-center">
+                <Link href="/">
+                  <Button variant="outline" className="border-stone-300">
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Voltar para Home
+                  </Button>
+                </Link>
+                <Button 
+                  onClick={async () => {
+                    await fetch(`${taskApiUrl}/${task.id}/resume`, { method: "POST" });
+                    await fetchTaskStatus();
+                  }}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Tentar Novamente
                 </Button>
-              </Link>
+              </div>
             </CardContent>
           </Card>
         ) : clips.length === 0 ? (

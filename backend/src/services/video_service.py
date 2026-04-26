@@ -75,6 +75,7 @@ class VideoService:
         url: str,
         progress_callback: Optional[Callable[[int, str, str], Awaitable[None]]] = None,
         video_quality: str = "best",
+        cookies_content: Optional[str] = None,
     ) -> Optional[Path]:
         """
         Download a YouTube video asynchronously com progresso em tempo real.
@@ -103,7 +104,7 @@ class VideoService:
             except Exception:
                 pass  # Nunca bloqueia o download por falha de progresso
 
-        video_path = await run_in_thread(download_youtube_video, url, 3, _sync_progress, video_quality)
+        video_path = await run_in_thread(download_youtube_video, url, 3, _sync_progress, video_quality, cookies_content)
 
         if not video_path:
             logger.error(f"Failed to download video: {url}")
@@ -214,6 +215,7 @@ class VideoService:
         cached_analysis_json: Optional[str] = None,
         progress_callback: Optional[Callable[[int, str, str], Awaitable[None]]] = None,
         should_cancel: Optional[Callable[[], Awaitable[bool]]] = None,
+        cookies_content: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Complete video processing pipeline.
@@ -231,7 +233,7 @@ class VideoService:
                 await progress_callback(10, "Downloading video...", "processing")
 
             if source_type == "youtube":
-                video_path = await VideoService.download_video(url, progress_callback, video_quality)
+                video_path = await VideoService.download_video(url, progress_callback, video_quality, cookies_content)
                 if not video_path:
                     raise Exception("Failed to download video")
             else:

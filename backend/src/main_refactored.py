@@ -220,6 +220,12 @@ app.include_router(imports_router)
 # Webhooks
 app.include_router(webhooks_router)
 
+from .api.routes.previews import router as previews_router
+app.include_router(previews_router)
+
+from .api.routes.users import router as users_router
+app.include_router(users_router)
+
 
 @app.get("/")
 def read_root():

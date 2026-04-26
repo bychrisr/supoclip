@@ -2,11 +2,13 @@
 AI-related functions for transcript analysis with enhanced precision and virality scoring.
 """
 
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal
 import asyncio
 import logging
 import re
+from datetime import datetime
 
 from pydantic_ai import Agent
 from pydantic import BaseModel, Field
@@ -181,11 +183,6 @@ def _get_missing_llm_key_error(model_name: str) -> Optional[str]:
             "Set ANTHROPIC_API_KEY or choose another provider with a matching API key."
         )
 
-    if provider == "ollama":
-        # Ollama can run locally without an API key. OLLAMA_BASE_URL/OLLAMA_API_KEY
-        # are optional and passed through as environment variables.
-        return None
-
     return None
 
 
@@ -206,133 +203,189 @@ def get_transcript_agent() -> Agent[None, TranscriptAnalysis]:
 
 
 async def get_most_relevant_parts_by_transcript(
-    transcript: str, include_broll: bool = False
+    db, transcript: str, user_id: Optional[str] = None, include_broll: bool = False
 ) -> TranscriptAnalysis:
-    """Get the most relevant parts of a transcript with virality scoring and optional B-roll detection."""
-    logger.info(
-        f"Starting AI analysis of transcript ({len(transcript)} chars), include_broll={include_broll}"
-    )
+    """Get relevant parts with dynamic User BYOK support and OpenRouter fallback."""
+    from sqlalchemy import select
+    from .models import User
+    
+    config = Config()
+    user_google_key = None
+    user_openrouter_key = None
+    
+    if user_id:
+        logger.info(f"🔍 [AI] Fetching custom keys for user {user_id}")
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user_google_key = user.google_api_key
+            user_openrouter_key = user.openrouter_api_key
+            if user_google_key: logger.info("💎 [Auth] Using User-specific Gemini Key")
+            if user_openrouter_key: logger.info("💎 [Auth] Using User-specific OpenRouter Key")
 
-    try:
-        agent = get_transcript_agent()
+    providers_to_try = []
+    
+    # Provider 1: Gemini (User or Global)
+    if user_google_key or config.google_api_key:
+        providers_to_try.append({
+            "name": "gemini",
+            "key": user_google_key or config.google_api_key,
+            "model": config.llm if config.llm.startswith("google") else "google-gla:gemini-2.5-flash"
+        })
+        
+    # Provider 2: OpenRouter (User or Global)
+    if user_openrouter_key or os.getenv("OPENROUTER_API_KEY"):
+        providers_to_try.append({
+            "name": "openrouter",
+            "key": user_openrouter_key or os.getenv("OPENROUTER_API_KEY"),
+            "model": os.getenv("OPENROUTER_MODEL", "google/gemini-2.5-flash-latest:free")
+        })
 
-        broll_instruction = ""
-        if include_broll:
-            broll_instruction = "\n\nAlso identify B-roll opportunities for each segment where stock footage could enhance the visual appeal."
+    analysis = None
+    last_error = None
 
-        result = await agent.run(
-            f"""Analyze this video transcript and identify the most engaging segments for short-form content.
-
-Find segments that would be compelling as standalone clips for social media.
-For each segment, provide a detailed virality score breakdown.{broll_instruction}
-
-Transcript:
-{transcript}"""
-        )
-
-        analysis = result.data
-        logger.info(
-            f"AI analysis found {len(analysis.most_relevant_segments)} segments"
-        )
-
-        # Validation with virality data handling
-        validated_segments = []
-        for segment in analysis.most_relevant_segments:
-            # Validate text content
-            if not segment.text.strip() or len(segment.text.split()) < 3:
-                logger.warning(
-                    f"Skipping segment with insufficient content: '{segment.text[:50]}...'"
-                )
-                continue
-
-            # Validate timestamps - CRITICAL: start and end must be different
-            if segment.start_time == segment.end_time:
-                logger.warning(
-                    f"Skipping segment with identical start/end times: {segment.start_time}"
-                )
-                continue
-
-            # Parse timestamps to validate duration
+    for provider in providers_to_try:
+        logger.info(f"🚀 [AI] Attempting analysis with provider: {provider['name']}")
+        
+        max_retries = 2
+        base_delay = 2
+        
+        for attempt in range(max_retries):
             try:
-                start_parts = segment.start_time.split(":")
-                end_parts = segment.end_time.split(":")
-
-                start_seconds = int(start_parts[0]) * 60 + int(start_parts[1])
-                end_seconds = int(end_parts[0]) * 60 + int(end_parts[1])
-
-                duration = end_seconds - start_seconds
-
-                if duration <= 0:
-                    logger.warning(
-                        f"Skipping segment with invalid duration: {segment.start_time} to {segment.end_time} = {duration}s"
-                    )
-                    continue
-
-                if duration < 5:  # Minimum 5 seconds
-                    logger.warning(
-                        f"Skipping segment too short: {duration}s (min 5s required)"
-                    )
-                    continue
-
-                # Validate virality scores
-                if segment.virality:
-                    # Ensure total score is sum of subscores
-                    calculated_total = (
-                        segment.virality.hook_score
-                        + segment.virality.engagement_score
-                        + segment.virality.value_score
-                        + segment.virality.shareability_score
-                    )
-                    if segment.virality.total_score != calculated_total:
-                        logger.warning(
-                            f"Correcting virality total: {segment.virality.total_score} -> {calculated_total}"
-                        )
-                        segment.virality.total_score = calculated_total
-
-                validated_segments.append(segment)
-                virality_info = (
-                    f", virality={segment.virality.total_score}"
-                    if segment.virality
-                    else ""
+                # Initialize agent for this provider/key
+                agent = Agent[None, TranscriptAnalysis](
+                    model=provider["model"],
+                    result_type=TranscriptAnalysis,
+                    system_prompt=simplified_system_prompt,
                 )
-                logger.info(
-                    f"Validated segment: {segment.start_time}-{segment.end_time} ({duration}s){virality_info}"
-                )
+                
+                # Dynamic environment override for the library
+                env_key = "GOOGLE_API_KEY" if provider["name"] == "gemini" else "OPENROUTER_API_KEY"
+                old_val = os.environ.get(env_key)
+                os.environ[env_key] = provider["key"]
 
-            except (ValueError, IndexError) as e:
+                try:
+                    result = await agent.run(
+                        f"Analyze transcript for engaging segments:\n\n{transcript}"
+                    )
+                    analysis = result.data
+                    logger.info(f"✅ [AI] Success with {provider['name']}")
+                    break
+                finally:
+                    # Restore env
+                    if old_val: os.environ[env_key] = old_val
+                    else: os.environ.pop(env_key, None)
+
+            except Exception as e:
+                last_error = str(e)
+                if "429" in last_error or "RESOURCE_EXHAUSTED" in last_error:
+                    match = re.search(r"retry in (\d+\.?\d*)s", last_error)
+                    delay = (float(match.group(1)) + 1.0) if match else (base_delay * (2 ** attempt))
+                    logger.warning(f"⚠️ [AI] {provider['name']} quota hit. Retry in {delay:.1f}s...")
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error(f"❌ [AI] {provider['name']} failed: {e}")
+                break # Try next provider
+        
+        if analysis: break
+
+    if not analysis:
+        raise RuntimeError(f"All AI providers failed. Last error: {last_error}")
+
+    # Validation with virality data handling
+    validated_segments = []
+    for segment in analysis.most_relevant_segments:
+        # Validate text content
+        if not segment.text.strip() or len(segment.text.split()) < 3:
+            logger.warning(
+                f"Skipping segment with insufficient content: '{segment.text[:50]}...'"
+            )
+            continue
+
+        # Validate timestamps - CRITICAL: start and end must be different
+        if segment.start_time == segment.end_time:
+            logger.warning(
+                f"Skipping segment with identical start/end times: {segment.start_time}"
+            )
+            continue
+
+        # Parse timestamps to validate duration
+        try:
+            start_parts = segment.start_time.split(":")
+            end_parts = segment.end_time.split(":")
+
+            start_seconds = int(start_parts[0]) * 60 + int(start_parts[1])
+            end_seconds = int(end_parts[0]) * 60 + int(end_parts[1])
+
+            duration = end_seconds - start_seconds
+
+            if duration <= 0:
                 logger.warning(
-                    f"Skipping segment with invalid timestamp format: {segment.start_time}-{segment.end_time}: {e}"
+                    f"Skipping segment with invalid duration: {segment.start_time} to {segment.end_time} = {duration}s"
                 )
                 continue
 
-        # Sort by virality score (primary) then relevance (secondary)
-        validated_segments.sort(
-            key=lambda x: (
-                x.virality.total_score if x.virality else 0,
-                x.relevance_score,
-            ),
-            reverse=True,
-        )
+            if duration < 5:  # Minimum 5 seconds
+                logger.warning(
+                    f"Skipping segment too short: {duration}s (min 5s required)"
+                )
+                continue
 
-        final_analysis = TranscriptAnalysis(
-            most_relevant_segments=validated_segments,
-            summary=analysis.summary,
-            key_topics=analysis.key_topics,
-            broll_opportunities=analysis.broll_opportunities if include_broll else None,
-        )
+            # Validate virality scores
+            if segment.virality:
+                # Ensure total score is sum of subscores
+                calculated_total = (
+                    segment.virality.hook_score
+                    + segment.virality.engagement_score
+                    + segment.virality.value_score
+                    + segment.virality.shareability_score
+                )
+                if segment.virality.total_score != calculated_total:
+                    logger.warning(
+                        f"Correcting virality total: {segment.virality.total_score} -> {calculated_total}"
+                    )
+                    segment.virality.total_score = calculated_total
 
-        logger.info(f"Selected {len(validated_segments)} segments for processing")
-        if validated_segments:
-            top = validated_segments[0]
+            validated_segments.append(segment)
+            virality_info = (
+                f", virality={segment.virality.total_score}"
+                if segment.virality
+                else ""
+            )
             logger.info(
-                f"Top segment - relevance: {top.relevance_score:.2f}, virality: {top.virality.total_score if top.virality else 'N/A'}"
+                f"Validated segment: {segment.start_time}-{segment.end_time} ({duration}s){virality_info}"
             )
 
-        return final_analysis
+        except (ValueError, IndexError) as e:
+            logger.warning(
+                f"Skipping segment with invalid timestamp format: {segment.start_time}-{segment.end_time}: {e}"
+            )
+            continue
 
-    except Exception as e:
-        logger.error(f"Error in transcript analysis: {e}")
-        raise RuntimeError(f"Transcript analysis failed: {str(e)}") from e
+    # Sort by virality score (primary) then relevance (secondary)
+    validated_segments.sort(
+        key=lambda x: (
+            x.virality.total_score if x.virality else 0,
+            x.relevance_score,
+        ),
+        reverse=True,
+    )
+
+    final_analysis = TranscriptAnalysis(
+        most_relevant_segments=validated_segments,
+        summary=analysis.summary,
+        key_topics=analysis.key_topics,
+        broll_opportunities=analysis.broll_opportunities if include_broll else None,
+    )
+
+    logger.info(f"Selected {len(validated_segments)} segments for processing")
+    if validated_segments:
+        top = validated_segments[0]
+        logger.info(
+            f"Top segment - relevance: {top.relevance_score:.2f}, virality: {top.virality.total_score if top.virality else 'N/A'}"
+        )
+
+    return final_analysis
 
 
 def get_most_relevant_parts_sync(transcript: str) -> TranscriptAnalysis:
