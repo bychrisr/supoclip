@@ -155,7 +155,6 @@ export default function TaskPage() {
   const [availableTemplates, setAvailableTemplates] = useState<
     Array<{ id: string; name: string; description: string; animation: string }>
   >([]);
-  const hasTriggeredAutoRefresh = useRef(false);
   const progressSamplesRef = useRef<Array<{ t: number; p: number }>>([]);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
 
@@ -165,14 +164,6 @@ export default function TaskPage() {
   const buildSupportError = useCallback(async (response: Response, fallbackMessage: string) => {
     const parsed = await parseApiError(response, fallbackMessage);
     return formatSupportMessage(parsed);
-  }, []);
-
-  const triggerAutoRefresh = useCallback(() => {
-    if (hasTriggeredAutoRefresh.current) return;
-    hasTriggeredAutoRefresh.current = true;
-    setTimeout(() => {
-      window.location.reload();
-    }, 700);
   }, []);
 
   const fetchTaskStatus = useCallback(
@@ -303,7 +294,7 @@ export default function TaskPage() {
       pushProgressSample(data.progress || 0);
 
       if (data.status === "completed") {
-        void fetchTaskStatus().then(() => triggerAutoRefresh());
+        void fetchTaskStatus();
       }
     });
 
@@ -319,7 +310,7 @@ export default function TaskPage() {
         setTask((currentTask) => (currentTask ? { ...currentTask, status: data.status } : currentTask));
 
         if (data.status === "completed") {
-          void fetchTaskStatus().then(() => triggerAutoRefresh());
+          void fetchTaskStatus();
         }
       }
     });
@@ -331,7 +322,6 @@ export default function TaskPage() {
 
       // Refresh task and clips
       await fetchTaskStatus();
-      triggerAutoRefresh();
     });
 
     eventSource.addEventListener("error", (e) => {

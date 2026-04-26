@@ -118,6 +118,7 @@ export default function Home() {
 
   // Caption template and B-roll states
   const [captionTemplate, setCaptionTemplate] = useState("default");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [availableTemplates, setAvailableTemplates] = useState<Array<{ id: string, name: string, description: string, animation: string, font_family?: string, font_size?: number, font_color?: string }>>([]);
   const [includeBroll, setIncludeBroll] = useState(false);
   const [brollAvailable, setBrollAvailable] = useState(false);
@@ -291,6 +292,7 @@ export default function Home() {
 
   const handleTemplateChange = (templateId: string) => {
     setCaptionTemplate(templateId);
+    setPreviewUrl(`${apiUrl}/previews/${templateId}`);
 
     const selectedTemplate = availableTemplates.find((template) => template.id === templateId);
     if (!selectedTemplate) {
@@ -1131,7 +1133,18 @@ export default function Home() {
                     </div>
 
                     {/* Video background */}
-                    {youtubeThumbnailUrl ? (
+                    {previewUrl ? (
+                      <video
+                        key={previewUrl}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        className="absolute inset-0 w-full h-full object-cover"
+                      >
+                        <source src={previewUrl} type="video/mp4" />
+                      </video>
+                    ) : youtubeThumbnailUrl ? (
                       <div
                         className="absolute inset-0 bg-cover bg-center scale-105 blur-sm"
                         style={{ backgroundImage: `url(${youtubeThumbnailUrl})` }}

@@ -10,7 +10,10 @@ from typing import Iterable, List
 import uuid
 import subprocess
 
-from moviepy import VideoFileClip, concatenate_videoclips, CompositeVideoClip, TextClip
+import math
+from moviepy import VideoFileClip, concatenate_videoclips, CompositeVideoClip, TextClip, vfx
+
+from .caption_templates import get_template
 
 
 @dataclass
@@ -26,6 +29,8 @@ EXPORT_PRESETS = {
     "tiktok": ExportPreset("tiktok", 1080, 1920, "10M", "192k"),
     "reels": ExportPreset("reels", 1080, 1920, "12M", "192k"),
     "shorts": ExportPreset("shorts", 1080, 1920, "10M", "192k"),
+    "square": ExportPreset("square", 1080, 1080, "8M", "192k"),
+    "portrait": ExportPreset("portrait", 1080, 1350, "10M", "192k"),
 }
 
 
@@ -128,17 +133,23 @@ def merge_clip_files(paths: Iterable[Path], output_dir: Path) -> Path:
     return output_path
 
 
+from .services.caption_renderer import CaptionRenderer
+
+
 def overlay_custom_captions(
     input_path: Path,
     output_dir: Path,
     caption_text: str,
     position: str,
     highlight_words: List[str],
+    template_name: str = "default",
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / _safe_name("caption")
 
     base_clip = VideoFileClip(str(input_path))
+    caption_layers = []
+    composite = None
     try:
         words = [w for w in caption_text.split() if w.strip()]
         source_fps = _source_fps(base_clip)
@@ -146,41 +157,32 @@ def overlay_custom_captions(
             base_clip.write_videofile(str(output_path), **_high_quality_encode_options(source_fps))
             return output_path
 
-        y_position = {
-            "top": int(base_clip.h * 0.18),
-            "middle": int(base_clip.h * 0.52),
-            "bottom": int(base_clip.h * 0.78),
-        }.get(position, int(base_clip.h * 0.78))
-
+        # Initialize the unified renderer (QA Audit Item 2)
+        renderer = CaptionRenderer(base_clip.w, base_clip.h, template_name)
+        
         highlighted = {w.strip().lower() for w in highlight_words if w.strip()}
         word_duration = max(base_clip.duration / max(len(words), 1), 0.1)
 
-        caption_layers = []
         for idx, word in enumerate(words):
-            color = (
-                "#FFD700" if word.lower().strip(".,!?;:") in highlighted else "#FFFFFF"
-            )
-            text_layer = (
-                TextClip(
-                    text=word,
-                    font_size=64,
-                    color=color,
-                    stroke_color="black",
-                    stroke_width=2,
-                    method="label",
-                )
-                .with_start(idx * word_duration)
-                .with_duration(word_duration)
-                .with_position(("center", y_position))
-            )
+            clean_word = word.lower().strip(".,!?;:")
+            is_highlighted = clean_word in highlighted
+            start_t = idx * word_duration
+            
+            # Use unified renderer logic (QA Audit Item 1)
+            text_layer = renderer.render_word(word, start_t, word_duration, is_highlighted)
             caption_layers.append(text_layer)
 
         composite = CompositeVideoClip([base_clip] + caption_layers)
         composite.write_videofile(str(output_path), **_high_quality_encode_options(source_fps))
-        composite.close()
-        for layer in caption_layers:
-            layer.close()
     finally:
+        # Explicit resource management (QA Audit Item 3)
+        if composite:
+            composite.close()
+        for layer in caption_layers:
+            try:
+                layer.close()
+            except Exception:
+                pass
         base_clip.close()
 
     return output_path

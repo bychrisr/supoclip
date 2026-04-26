@@ -676,6 +676,10 @@ class TaskService:
         if not clip or clip["task_id"] != task_id:
             raise ValueError("Clip not found")
 
+        # Get task to know which template to use
+        task = await self.task_repo.get_task_by_id(self.db, task_id)
+        template_name = task.get("caption_template", "default") if task else "default"
+
         input_path = Path(clip["file_path"])
         if not input_path.exists():
             raise ValueError("Clip file not found")
@@ -686,6 +690,7 @@ class TaskService:
             caption_text,
             position,
             highlight_words,
+            template_name=template_name,
         )
 
         await self.clip_repo.update_clip(

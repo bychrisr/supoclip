@@ -667,6 +667,8 @@ def get_words_in_range(
     return relevant_words
 
 
+from .services.caption_renderer import CaptionRenderer
+
 def create_assemblyai_subtitles(
     video_path: Path,
     clip_start: float,
@@ -685,73 +687,28 @@ def create_assemblyai_subtitles(
         logger.warning("No cached transcript data available for subtitles")
         return []
 
-    # Get template settings
-    template = get_template(caption_template)
-    animation_type = template.get("animation", "none")
-
-    effective_font_family = font_family or template["font_family"]
-    effective_font_size = int(font_size) if font_size else int(template["font_size"])
-    effective_font_color = font_color or template["font_color"]
-    effective_template = {
-        **template,
-        "font_size": effective_font_size,
-        "font_color": effective_font_color,
-        "font_family": effective_font_family,
-    }
-
-    logger.info(
-        f"Creating subtitles with template '{caption_template}', animation: {animation_type}"
-    )
-
+    # Initialize the unified renderer (QA Audit Item 2)
+    renderer = CaptionRenderer(video_width, video_height, caption_template)
+    
     # Get words in range
     relevant_words = get_words_in_range(transcript_data, clip_start, clip_end)
-
     if not relevant_words:
-        logger.warning("No words found in clip timerange")
         return []
 
-    # Choose subtitle creation method based on animation type
-    if animation_type == "karaoke":
-        return create_karaoke_subtitles(
-            relevant_words,
-            video_width,
-            video_height,
-            effective_template,
-            effective_font_family,
-        )
-    elif animation_type == "pop":
-        return create_pop_subtitles(
-            relevant_words,
-            video_width,
-            video_height,
-            effective_template,
-            effective_font_family,
-        )
-    elif animation_type == "bounce":
-        return create_bounce_subtitles(
-            relevant_words,
-            video_width,
-            video_height,
-            effective_template,
-            effective_font_family,
-        )
-    elif animation_type == "fade":
-        return create_fade_subtitles(
-            relevant_words,
-            video_width,
-            video_height,
-            effective_template,
-            effective_font_family,
-        )
-    else:
-        # Default static subtitles
-        return create_static_subtitles(
-            relevant_words,
-            video_width,
-            video_height,
-            effective_template,
-            effective_font_family,
-        )
+    subtitle_clips = []
+    # Usar a lógica do Renderer para cada palavra
+    for word_data in relevant_words:
+        text = word_data["text"]
+        start_t = word_data["start"]
+        duration = word_data["end"] - word_data["start"]
+        
+        if duration < 0.05: continue
+
+        # O renderer já cuida das animações e posicionamento (QA Audit Item 1)
+        t_clip = renderer.render_word(text, start_t, duration, is_highlighted=False)
+        subtitle_clips.append(t_clip)
+
+    return subtitle_clips
 
 
 _PUNCT_TOKENS = {",", ".", "!", "?", ";", ":", "…"}
